@@ -40,6 +40,16 @@ mcs: $(mcs)
 program:
 	$(VIVADO) $(VIVADOFLAGS) -source scripts/program.tcl
 
+quick:
+	mkdir -p $(work-dir)
+	$(VIVADO) -nojournal -mode batch -source scripts/quick_rebuild.tcl
+	cp ariane.runs/impl_1/ariane_xilinx* ./$(work-dir)
+
+fast:
+	mkdir -p $(work-dir)
+	$(VIVADO) -nojournal -mode batch -source scripts/fast_rebuild.tcl
+	cp ariane.runs/impl_1/ariane_xilinx* ./$(work-dir)
+
 clean:
 	rm -rf *.log *.jou *.str *.mif *.xpr $(work-dir) ariane.cache ariane.hw ariane.ip_user_files scripts/vivado*
 

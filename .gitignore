@@ -57,3 +57,15 @@ Bender.lock
 /verif/sim/encaps.traces
 /verif/sim/iti.traces
 /verif/sim/verilator.fst.hier
+
+# ML-DSA build artifacts - never commit
+corev_apu/fpga/ariane.runs/
+corev_apu/fpga/work-fpga/*.bit
+backups/
+**/xsim.dir/
+**/xvhdl.pb
+**/xvlog.pb
+*.jou
+**/xsim.dir/**
+*.elf
+.claude/

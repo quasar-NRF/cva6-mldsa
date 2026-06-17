@@ -185,12 +185,17 @@ src :=  $(if $(spike-tandem),verif/tb/core/uvma_core_cntrl_pkg.sv)              
         vendor/pulp-platform/axi/src/axi_join.sv                                     \
         vendor/pulp-platform/axi/src/axi_delayer.sv                                  \
         vendor/pulp-platform/axi/src/axi_to_axi_lite.sv                              \
+        vendor/pulp-platform/axi/src/axi_burst_splitter.sv                           \
         vendor/pulp-platform/axi/src/axi_id_prepend.sv                               \
         vendor/pulp-platform/axi/src/axi_atop_filter.sv                              \
         vendor/pulp-platform/axi/src/axi_err_slv.sv                                  \
         vendor/pulp-platform/axi/src/axi_mux.sv                                      \
         vendor/pulp-platform/axi/src/axi_demux.sv                                    \
         vendor/pulp-platform/axi/src/axi_xbar.sv                                     \
+        vendor/pulp-platform/axi/src/axi_lite_regs.sv                                \
+        vendor/pulp-platform/common_cells/src/cf_math_pkg.sv                         \
+        vendor/pulp-platform/common_cells/src/id_queue.sv                            \
+        vendor/pulp-platform/common_cells/src/onehot_to_bin.sv                       \
         vendor/pulp-platform/common_cells/src/cdc_2phase.sv                          \
         vendor/pulp-platform/common_cells/src/spill_register_flushable.sv            \
         vendor/pulp-platform/common_cells/src/spill_register.sv                      \
@@ -256,7 +261,11 @@ uart_src_sv:= corev_apu/fpga/src/apb_uart/src/slib_clock_div.sv     \
               corev_apu/fpga/src/apb_uart/src/apb_uart_wrap.sv
 uart_src_sv := $(addprefix $(root-dir), $(uart_src_sv))
 
+mldsa_vhdl_src := $(wildcard corev_apu/fpga/src/ML-DSA-OSH/ref_combined/src/*.vhd)
+mldsa_vhdl_src := $(addprefix $(root-dir), $(mldsa_vhdl_src))
+
 fpga_src :=  $(wildcard corev_apu/fpga/src/*.sv) $(wildcard corev_apu/fpga/src/ariane-ethernet/*.sv) common/local/util/tc_sram_fpga_wrapper.sv common/local/util/hpdcache_sram_1rw.sv common/local/util/hpdcache_sram_wbyteenable_1rw.sv vendor/pulp-platform/fpga-support/rtl/SyncSpRamBeNx64.sv vendor/pulp-platform/fpga-support/rtl/SyncSpRamBeNx32.sv vendor/pulp-platform/fpga-support/rtl/SyncSpRam.sv
+fpga_src += corev_apu/fpga/src/axi_mldsa_bridge.sv $(wildcard corev_apu/fpga/src/ML-DSA-OSH/ref_combined/src/*.v)
 
 altera_src := $(shell find $(root-dir)/corev_apu/altera/src -type f \( -name "*.v" -o -name "*.sv" -o -name "*.svh" \) -print | sed 's|//|/|g')
 altera_src += $(src)
@@ -813,12 +822,37 @@ fpga: $(ariane_pkg) $(src) $(fpga_src) $(uart_src) $(dpti_src) $(src_flist)
 	@echo "[FPGA] Generate sources"
 	@echo read_vhdl        {$(uart_src)}    > corev_apu/fpga/scripts/add_sources.tcl
 	@echo read_vhdl        {$(dpti_src)}   >> corev_apu/fpga/scripts/add_sources.tcl
+	@echo read_vhdl        {$(mldsa_vhdl_src)}   >> corev_apu/fpga/scripts/add_sources.tcl
 	@echo read_verilog -sv {$(ariane_pkg)} >> corev_apu/fpga/scripts/add_sources.tcl
 	@echo read_verilog -sv {$(filter-out $(fpga_filter), $(src_flist))}		>> corev_apu/fpga/scripts/add_sources.tcl
 	@echo read_verilog -sv {$(filter-out $(fpga_filter), $(src))} 	   >> corev_apu/fpga/scripts/add_sources.tcl
 	@echo read_verilog -sv {$(fpga_src)}   >> corev_apu/fpga/scripts/add_sources.tcl
 	@echo "[FPGA] Generate Bitstream"
 	$(MAKE) -C corev_apu/fpga BOARD=$(BOARD) XILINX_PART=$(XILINX_PART) XILINX_BOARD=$(XILINX_BOARD) CLK_PERIOD_NS=$(CLK_PERIOD_NS)
+
+quick: $(ariane_pkg) $(src) $(fpga_src) $(uart_src) $(dpti_src) $(src_flist)
+	@echo "[FPGA] Generate sources (quick)"
+	@echo read_vhdl        {$(uart_src)}    > corev_apu/fpga/scripts/add_sources.tcl
+	@echo read_vhdl        {$(dpti_src)}   >> corev_apu/fpga/scripts/add_sources.tcl
+	@echo read_vhdl        {$(mldsa_vhdl_src)}   >> corev_apu/fpga/scripts/add_sources.tcl
+	@echo read_verilog -sv {$(ariane_pkg)} >> corev_apu/fpga/scripts/add_sources.tcl
+	@echo read_verilog -sv {$(filter-out $(fpga_filter), $(src_flist))}		>> corev_apu/fpga/scripts/add_sources.tcl
+	@echo read_verilog -sv {$(filter-out $(fpga_filter), $(src))} 	   >> corev_apu/fpga/scripts/add_sources.tcl
+	@echo read_verilog -sv {$(fpga_src)}   >> corev_apu/fpga/scripts/add_sources.tcl
+	@echo "[FPGA] Quick rebuild (skip IP generation)"
+	$(MAKE) -C corev_apu/fpga quick BOARD=$(BOARD) XILINX_PART=$(XILINX_PART) XILINX_BOARD=$(XILINX_BOARD) CLK_PERIOD_NS=$(CLK_PERIOD_NS)
+
+fast: $(ariane_pkg) $(src) $(fpga_src) $(uart_src) $(dpti_src) $(src_flist)
+	@echo "[FPGA] Generate sources (fast incremental)"
+	@echo read_vhdl        {$(uart_src)}    > corev_apu/fpga/scripts/add_sources.tcl
+	@echo read_vhdl        {$(dpti_src)}   >> corev_apu/fpga/scripts/add_sources.tcl
+	@echo read_vhdl        {$(mldsa_vhdl_src)}   >> corev_apu/fpga/scripts/add_sources.tcl
+	@echo read_verilog -sv {$(ariane_pkg)} >> corev_apu/fpga/scripts/add_sources.tcl
+	@echo read_verilog -sv {$(filter-out $(fpga_filter), $(src_flist))}		>> corev_apu/fpga/scripts/add_sources.tcl
+	@echo read_verilog -sv {$(filter-out $(fpga_filter), $(src))} 	   >> corev_apu/fpga/scripts/add_sources.tcl
+	@echo read_verilog -sv {$(fpga_src)}   >> corev_apu/fpga/scripts/add_sources.tcl
+	@echo "[FPGA] Fast incremental rebuild"
+	$(MAKE) -C corev_apu/fpga fast BOARD=$(BOARD) XILINX_PART=$(XILINX_PART) XILINX_BOARD=$(XILINX_BOARD) CLK_PERIOD_NS=$(CLK_PERIOD_NS)
 
 altera: PLATFORM := "PLAT_AGILEX"
 

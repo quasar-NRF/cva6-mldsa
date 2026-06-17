@@ -308,6 +308,18 @@ logic                    rom_req;
 logic [AxiAddrWidth-1:0] rom_addr;
 logic [AxiDataWidth-1:0] rom_rdata;
 
+// ML-DSA Accelerator bridge
+logic                    mldsa_start;
+logic [1:0]              mldsa_mode;
+logic [2:0]              mldsa_sec_lvl;
+logic                    mldsa_valid_i;
+logic                    mldsa_ready_i;
+logic [AxiDataWidth-1:0] mldsa_data_i;
+logic                    mldsa_valid_o;
+logic                    mldsa_ready_o;
+logic [AxiDataWidth-1:0] mldsa_data_o;
+logic [62:0]             mldsa_diag;
+
 // Debug
 logic          debug_req_valid;
 logic          debug_req_ready;
@@ -339,7 +351,11 @@ assign rst = ddr_sync_reset;
 // AXI Xbar
 // ---------------
 
-axi_pkg::xbar_rule_64_t [ariane_soc::NB_PERIPHERALS-1:0] addr_map;
+// HPS (index 10) is not connected on Xilinx, so we have one fewer address rule
+// than master ports.  The crossbar's NoAddrRules must match this exact count.
+localparam NumAddrRules = ariane_soc::NB_PERIPHERALS - 1; // 11 (excludes HPS)
+
+axi_pkg::xbar_rule_64_t [NumAddrRules-1:0] addr_map;
 
 assign addr_map = '{
   '{ idx: ariane_soc::Debug,    start_addr: ariane_soc::DebugBase,    end_addr: ariane_soc::DebugBase + ariane_soc::DebugLength       },
@@ -351,14 +367,15 @@ assign addr_map = '{
   '{ idx: ariane_soc::SPI,      start_addr: ariane_soc::SPIBase,      end_addr: ariane_soc::SPIBase + ariane_soc::SPILength           },
   '{ idx: ariane_soc::Ethernet, start_addr: ariane_soc::EthernetBase, end_addr: ariane_soc::EthernetBase + ariane_soc::EthernetLength },
   '{ idx: ariane_soc::GPIO,     start_addr: ariane_soc::GPIOBase,     end_addr: ariane_soc::GPIOBase + ariane_soc::GPIOLength         },
+  '{ idx: ariane_soc::MLDSA,    start_addr: ariane_soc::MLDSABase,    end_addr: ariane_soc::MLDSABase + ariane_soc::MLDSALength      },
   '{ idx: ariane_soc::DRAM,     start_addr: ariane_soc::DRAMBase,     end_addr: ariane_soc::DRAMBase + ariane_soc::DRAMLength         }
 };
 
 localparam axi_pkg::xbar_cfg_t AXI_XBAR_CFG = '{
   NoSlvPorts:         ariane_soc::NrSlaves,
   NoMstPorts:         ariane_soc::NB_PERIPHERALS,
-  MaxMstTrans:        1, // Probably requires update
-  MaxSlvTrans:        1, // Probably requires update
+  MaxMstTrans:        1,
+  MaxSlvTrans:        1,
   FallThrough:        1'b0,
   LatencyMode:        axi_pkg::CUT_ALL_PORTS,
   AxiIdWidthSlvPorts: AxiIdWidthMaster,
@@ -366,7 +383,7 @@ localparam axi_pkg::xbar_cfg_t AXI_XBAR_CFG = '{
   UniqueIds:          1'b0,
   AxiAddrWidth:       AxiAddrWidth,
   AxiDataWidth:       AxiDataWidth,
-  NoAddrRules:        ariane_soc::NB_PERIPHERALS
+  NoAddrRules:        NumAddrRules
 };
 
 axi_xbar_intf #(
@@ -1062,6 +1079,46 @@ assign FifoEn = !usrFull && !usrEmpty;
           .prog_siwun(prog_siwun),
           .prog_d(prog_d)
 );
+// ---------------
+// ML-DSA accelerator bridge and instance
+// ---------------
+axi_mldsa_bridge #(
+    .AxiAddrWidth ( AxiAddrWidth     ),
+    .AxiDataWidth ( AxiDataWidth     ),
+    .AxiIdWidth   ( AxiIdWidthSlaves ),
+    .AxiUserWidth ( AxiUserWidth     )
+) i_axi_mldsa_bridge (
+    .clk_i      ( clk                         ),
+    .rst_ni     ( ndmreset_n                 ),
+    .axi        ( master[ariane_soc::MLDSA]  ),
+    .rst_o      ( mldsa_rst                  ),
+    .start_o    ( mldsa_start                ),
+    .mode_o     ( mldsa_mode                 ),
+    .sec_lvl_o  ( mldsa_sec_lvl              ),
+    .valid_i_o  ( mldsa_valid_i              ),
+    .data_i_o   ( mldsa_data_i               ),
+    .ready_i_i  ( mldsa_ready_i              ),
+    .valid_o_i  ( mldsa_valid_o              ),
+    .ready_o_o  ( mldsa_ready_o              ),
+    .data_o_i   ( mldsa_data_o               ),
+    .diag_i     ( mldsa_diag                 )
+);
+
+combined_top i_mldsa_accel (
+    .clk      ( clk                          ),
+    .rst      ( ~ndmreset_n | mldsa_rst     ),
+    .start    ( mldsa_start                  ),
+    .mode     ( mldsa_mode      ),
+    .sec_lvl  ( mldsa_sec_lvl   ),
+    .valid_i  ( mldsa_valid_i   ),
+    .ready_i  ( mldsa_ready_i   ),
+    .data_i   ( mldsa_data_i    ),
+    .valid_o  ( mldsa_valid_o   ),
+    .ready_o  ( mldsa_ready_o   ),
+    .data_o   ( mldsa_data_o    ),
+    .diag     ( mldsa_diag      )
+);
+
 // ---------------
 // Peripherals
 // ---------------

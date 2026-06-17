@@ -100,9 +100,9 @@ report_utilization -hierarchical                                        -file re
 report_cdc                                                              -file reports/$project.cdc.rpt
 report_clock_interaction                                                -file reports/$project.clock_interaction.rpt
 
-# set for RuntimeOptimized implementation
-set_property "steps.place_design.args.directive" "RuntimeOptimized" [get_runs impl_1]
-set_property "steps.route_design.args.directive" "RuntimeOptimized" [get_runs impl_1]
+# Use Explore directive for dense designs (~80% LUT utilization)
+set_property "steps.place_design.args.directive" "Explore" [get_runs impl_1]
+set_property "steps.route_design.args.directive" "Explore" [get_runs impl_1]
 
 launch_runs impl_1
 wait_on_run impl_1

@@ -1,0 +1,21 @@
+# Vivado xsim byproducts — regenerated each run
+xsim.dir/
+webtalk*
+xvlog.log
+xvhdl.log
+xelab.log
+*.jou
+*.pb
+
+# Symlinks to KAT files (created at run time)
+zetas.txt
+KeyGen_*.txt
+SigGen_*.txt
+SigVer_*.txt
+
+# Auto-generated testbenches (standalone only)
+tb_*_top_sim.v
+
+# Per-run logs
+run.log
+xsim_output.log

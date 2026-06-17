@@ -16,6 +16,19 @@
 
 set project ariane
 
+# Ensure batch sessions know where to find board files
+set script_dir [file dirname [info script]]
+set set_board_script [file join $script_dir set_board_repo.tcl]
+if {[file exists $set_board_script]} {
+    source $set_board_script
+} else {
+    if {[file exists "../scripts/set_board_repo.tcl"]} {
+        source ../scripts/set_board_repo.tcl
+    } elseif {[file exists "./set_board_repo.tcl"]} {
+        source ./set_board_repo.tcl
+    }
+}
+
 create_project $project . -force -part $::env(XILINX_PART)
 set_property board_part $::env(XILINX_BOARD) [current_project]
 

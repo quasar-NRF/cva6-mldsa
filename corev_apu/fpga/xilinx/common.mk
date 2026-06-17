@@ -1,8 +1,8 @@
 all:
-	vivado -mode batch -source tcl/run.tcl
+	vivado -mode batch -source ../../scripts/set_board_repo.tcl -source tcl/run.tcl
 
 gui:
-	vivado -mode gui -source tcl/run.tcl &
+	vivado -mode gui -source ../../scripts/set_board_repo.tcl -source tcl/run.tcl &
 
 clean:
 	rm -rf ip/*
