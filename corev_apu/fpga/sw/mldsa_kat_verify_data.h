@@ -1,3 +1,11 @@
+// ==================================================
+// Giulio Golinelli - golinelli.giulio13@gmail.com
+// TUMCREATE QUASAR RESEARCH ENGINEER
+// Modified: 2026-06-17
+// This file contains modifications vs. the upstream
+// CVA6 / ML-DSA-OSH source fork.
+// ==================================================
+
 // KAT Test Vector #5 for ML-DSA-65 Verify
 // mlen=1, ctxlen=174, expected_result=1
 // Total PK words: 244, SIG words: ~414, FMTD words: 23

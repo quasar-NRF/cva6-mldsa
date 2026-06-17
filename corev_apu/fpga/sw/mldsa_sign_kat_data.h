@@ -1,3 +1,11 @@
+// ==================================================
+// Giulio Golinelli - golinelli.giulio13@gmail.com
+// TUMCREATE QUASAR RESEARCH ENGINEER
+// Modified: 2026-06-17
+// This file contains modifications vs. the upstream
+// CVA6 / ML-DSA-OSH source fork.
+// ==================================================
+
 // NIST KAT SigGen test vector for ML-DSA-65
 // TV_INDEX=6 from SigGen_*_65.txt
 // mlen=536, ctxlen=37

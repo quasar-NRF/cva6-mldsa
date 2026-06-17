@@ -1,3 +1,13 @@
+<!--
+==================================================
+Giulio Golinelli - golinelli.giulio13@gmail.com
+TUMCREATE QUASAR RESEARCH ENGINEER
+Modified: 2026-06-17
+This file contains modifications vs. the upstream
+CVA6 / ML-DSA-OSH source fork.
+==================================================
+-->
+
 # CVA6 + ML-DSA Accelerator Integration <!-- omit in toc -->
 
 This project integrates a **CVA6 RISC-V processor** with an **ML-DSA-OSH post-quantum hardware accelerator** on a Xilinx Genesys2 FPGA. Software running on the CVA6 performs post-quantum cryptographic operations — **KeyGen**, **Sign**, and **Verify** — by reading and writing memory-mapped registers at address `0x5000_0000`.

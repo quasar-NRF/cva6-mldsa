@@ -1,3 +1,13 @@
+<!--
+==================================================
+Giulio Golinelli - golinelli.giulio13@gmail.com
+TUMCREATE QUASAR RESEARCH ENGINEER
+Modified: 2026-06-17
+This file contains modifications vs. the upstream
+CVA6 / ML-DSA-OSH source fork.
+==================================================
+-->
+
 # ML-DSA Verify simulation tests
 
 Verify checks whether a signature is valid for a given public key and message.

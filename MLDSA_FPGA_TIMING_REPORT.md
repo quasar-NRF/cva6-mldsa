@@ -1,3 +1,13 @@
+<!--
+==================================================
+Giulio Golinelli - golinelli.giulio13@gmail.com
+TUMCREATE QUASAR RESEARCH ENGINEER
+Modified: 2026-06-17
+This file contains modifications vs. the upstream
+CVA6 / ML-DSA-OSH source fork.
+==================================================
+-->
+
 # ML-DSA CVA6 FPGA Utilization & Hardware Timing Report
 
 **Date:** 2026-06-17

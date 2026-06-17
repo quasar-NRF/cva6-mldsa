@@ -1,3 +1,11 @@
+// ==================================================
+// Giulio Golinelli - golinelli.giulio13@gmail.com
+// TUMCREATE QUASAR RESEARCH ENGINEER
+// Modified: 2026-06-17
+// This file contains modifications vs. the upstream
+// CVA6 / ML-DSA-OSH source fork.
+// ==================================================
+
 // AXI slave bridge to ML-DSA handshake accelerator.
 // Uses pulp-platform axi_to_axi_lite + axi_lite_regs for proven protocol handling,
 // then converts register reads/writes into the accelerator's valid/ready streaming interface.

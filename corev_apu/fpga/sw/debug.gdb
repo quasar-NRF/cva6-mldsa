@@ -1,3 +1,11 @@
+# ==================================================
+# Giulio Golinelli - golinelli.giulio13@gmail.com
+# TUMCREATE QUASAR RESEARCH ENGINEER
+# Modified: 2026-06-17
+# This file contains modifications vs. the upstream
+# CVA6 / ML-DSA-OSH source fork.
+# ==================================================
+
 printf "diag_status_after_push = 0x%lx\n", diag_status_after_push
 printf "diag_status_after_start = 0x%lx\n", diag_status_after_start
 printf "diag_status_stuck = 0x%lx\n", diag_status_stuck

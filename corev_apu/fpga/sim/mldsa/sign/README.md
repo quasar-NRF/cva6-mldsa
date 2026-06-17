@@ -1,3 +1,13 @@
+<!--
+==================================================
+Giulio Golinelli - golinelli.giulio13@gmail.com
+TUMCREATE QUASAR RESEARCH ENGINEER
+Modified: 2026-06-17
+This file contains modifications vs. the upstream
+CVA6 / ML-DSA-OSH source fork.
+==================================================
+-->
+
 # ML-DSA Sign simulation tests
 
 Sign produces a 3309-byte signature (414 words) from the secret key, message,

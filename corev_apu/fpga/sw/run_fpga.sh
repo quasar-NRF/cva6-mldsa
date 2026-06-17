@@ -1,3 +1,11 @@
+# ==================================================
+# Giulio Golinelli - golinelli.giulio13@gmail.com
+# TUMCREATE QUASAR RESEARCH ENGINEER
+# Modified: 2026-06-17
+# This file contains modifications vs. the upstream
+# CVA6 / ML-DSA-OSH source fork.
+# ==================================================
+
 #!/bin/bash
 # Compile and run a RISC-V program on the Genesys2 FPGA via OpenOCD + GDB.
 # Usage: ./run_fpga.sh <source.c | file.elf> [--debug] [--keep-openocd] [--watch <var> ...]

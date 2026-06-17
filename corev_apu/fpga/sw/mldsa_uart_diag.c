@@ -1,3 +1,11 @@
+// ==================================================
+// Giulio Golinelli - golinelli.giulio13@gmail.com
+// TUMCREATE QUASAR RESEARCH ENGINEER
+// Modified: 2026-06-17
+// This file contains modifications vs. the upstream
+// CVA6 / ML-DSA-OSH source fork.
+// ==================================================
+
 /*
  * ML-DSA-65 KeyGen diagnostic test with UART output.
  * Uses UART at 0x10000000 (16550-compatible) for real-time debug prints.

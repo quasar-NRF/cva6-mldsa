@@ -1,3 +1,11 @@
+// ==================================================
+// Giulio Golinelli - golinelli.giulio13@gmail.com
+// TUMCREATE QUASAR RESEARCH ENGINEER
+// Modified: 2026-06-17
+// This file contains modifications vs. the upstream
+// CVA6 / ML-DSA-OSH source fork.
+// ==================================================
+
 // Bridge testbench for ML-DSA KeyGen.
 // Drives axi_mldsa_bridge via a minimal AXI4 master BFM (single-beat transactions).
 // The bridge wraps combined_top (the accelerator). Output is compared byte-for-byte

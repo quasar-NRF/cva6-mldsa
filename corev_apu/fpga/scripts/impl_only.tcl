@@ -1,3 +1,11 @@
+# ==================================================
+# Giulio Golinelli - golinelli.giulio13@gmail.com
+# TUMCREATE QUASAR RESEARCH ENGINEER
+# Modified: 2026-06-17
+# This file contains modifications vs. the upstream
+# CVA6 / ML-DSA-OSH source fork.
+# ==================================================
+
 # Resume from completed synthesis — only run implementation + bitstream.
 # Use when synth finished but impl failed (e.g. incremental property error).
 #

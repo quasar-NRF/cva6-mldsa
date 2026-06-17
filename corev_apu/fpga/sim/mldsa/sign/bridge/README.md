@@ -1,3 +1,13 @@
+<!--
+==================================================
+Giulio Golinelli - golinelli.giulio13@gmail.com
+TUMCREATE QUASAR RESEARCH ENGINEER
+Modified: 2026-06-17
+This file contains modifications vs. the upstream
+CVA6 / ML-DSA-OSH source fork.
+==================================================
+-->
+
 # Sign BRIDGE
 
 Tests the ML-DSA-65 accelerator **with the AXI bridge** in Sign mode. This is

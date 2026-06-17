@@ -1,3 +1,11 @@
+// ==================================================
+// Giulio Golinelli - golinelli.giulio13@gmail.com
+// TUMCREATE QUASAR RESEARCH ENGINEER
+// Modified: 2026-06-17
+// This file contains modifications vs. the upstream
+// CVA6 / ML-DSA-OSH source fork.
+// ==================================================
+
 // Bridge testbench for ML-DSA end-to-end (KeyGen → Sign → Verify).
 // Runs all three phases through axi_mldsa_bridge in sequence using the SAME
 // accelerator + bridge instance. Uses KAT seed for KeyGen, then routes the

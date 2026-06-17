@@ -1,3 +1,11 @@
+// ==================================================
+// Giulio Golinelli - golinelli.giulio13@gmail.com
+// TUMCREATE QUASAR RESEARCH ENGINEER
+// Modified: 2026-06-17
+// This file contains modifications vs. the upstream
+// CVA6 / ML-DSA-OSH source fork.
+// ==================================================
+
 /*
  * Z boundary dump: read Z at poly boundaries to detect uniform-per-poly pattern.
  * Each poly = 80 words (256 coeffs * 20 bits / 64 bits).

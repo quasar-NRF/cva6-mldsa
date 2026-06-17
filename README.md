@@ -1,141 +1,123 @@
-# CVA6 RISC-V CPU [![Build Status](https://github.com/openhwgroup/cva6/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/openhwgroup/cva6/actions/workflows/ci.yml) [![CVA6 dashboard](https://riscv-ci.pages.thales-invia.fr/dashboard/badge_master.svg)](https://riscv-ci.pages.thales-invia.fr/dashboard/dashboard_cva6.html) [![Documentation Status](https://readthedocs.com/projects/openhw-group-cva6-user-manual/badge/?version=latest)](https://docs.openhwgroup.org/projects/cva6-user-manual/?badge=latest) [![GitHub release](https://img.shields.io/github/release/openhwgroup/cva6?include_prereleases=&sort=semver&color=blue)](https://github.com/openhwgroup/cva6/releases/)
+<!--
+==================================================
+Giulio Golinelli - golinelli.giulio13@gmail.com
+TUMCREATE QUASAR RESEARCH ENGINEER
+Modified: 2026-06-17
+This file contains modifications vs. the upstream
+CVA6 / ML-DSA-OSH source fork.
+==================================================
+-->
 
-CVA6 is a 6-stage, single-issue, in-order CPU which implements the 64-bit RISC-V instruction set. It fully implements I, M, A and C extensions as specified in Volume I: User-Level ISA V 2.3 as well as the draft privilege extension 1.10. It implements three privilege levels M, S, U to fully support a Unix-like operating system. Furthermore, it is compliant to the draft external debug spec 0.13.
+# CVA6-MLDSA — Post-Quantum Signature Accelerator on RISC-V
 
-It has a configurable size, separate TLBs, a hardware PTW and branch-prediction (branch target buffer and branch history table). The primary design goal was on reducing critical path length.
+Fork of the [OpenHWGroup `cva6`](https://github.com/openhwgroup/cva6)
+64-bit RISC-V core, integrated with the
+[ML-DSA-65](https://doi.org/10.6028/NIST.FIPS.204) post-quantum digital
+signature accelerator (FIPS 204, Module-Lattice Digital Signature
+Algorithm) via a memory-mapped AXI bridge. Target platform: Digilent
+Genesys2 FPGA (Xilinx Kintex UltraScale).
 
-The CVA6 core is part of a vivid ecosystem. In [this document](RESOURCES.md), we gather pointers to this ecosystem (building blocks, designs, partners...).
+This repository is the **system integration** layer; the accelerator
+itself lives in the
+[`quasar-NRF/ML-DSA-OSH`](https://github.com/quasar-NRF/ML-DSA-OSH)
+submodule (itself a fork of
+[`KULeuven-COSIC/ML-DSA-OSH`](https://github.com/KULeuven-COSIC/ML-DSA-OSH)
+with bridge-context fixes).
 
-A performance model of CVA6 is available in the `perf-model/` folder of this repository.
-It can be used to investigate performance-related micro-architecture changes.
+## What's in this fork
 
-<img src="docs/03_cva6_design/_static/ariane_overview.drawio.png"/>
+- `corev_apu/fpga/src/axi_mldsa_bridge.sv` — AXI4 slave → accelerator
+  streaming-IO bridge (64-bit data, register-mapped CTRL/DATA_IN/DATA_OUT
+  /STATUS).
+- `corev_apu/fpga/src/ariane_xilinx.sv` — top-level FPGA design with the
+  accelerator and bridge wired into the SoC address map.
+- `corev_apu/tb/ariane_soc_pkg.sv` — address-map package with the
+  accelerator's AXI base.
+- `corev_apu/fpga/sim/mldsa/` — Vivado XSIM testbench suite, 8 tests:
+  keygen/sign/verify × standalone/bridge + end-to-end chained. All pass
+  against the NIST KAT vectors (sec_lvl=3).
+- `corev_apu/fpga/sw/` — bare-metal RISC-V test programs
+  (`mldsa_*_test.c`, `mldsa_*_diag.c`) and the deployment script
+  `deploy_test.sh` (program FPGA + UART capture + auto-pass/fail).
+- `corev_apu/fpga/scripts/` — fast-rebuild TCL helpers for the Vivado
+  flow.
+- Documentation: `CVA6_MLDSA_INTEGRATION.md` (full design + debug log),
+  `MLDSA_BUGS_REPORT.md` (upstream vs. bridge-context bugs),
+  `MLDSA_FPGA_TIMING_REPORT.md` (utilization + HW timing estimates),
+  `PROJECT_STATUS.md`.
 
+## Simulation status (all green)
 
-# Quick setup
+| Phase    | Standalone | Bridge | Notes                                |
+|----------|-----------|--------|--------------------------------------|
+| KeyGen   | PASS      | PASS   | pk/sk byte-exact vs NIST KAT         |
+| Sign     | PASS      | PASS   | signature byte-exact vs NIST KAT     |
+| Verify   | PASS      | PASS   | fail bit matches NIST expected       |
+| End-to-end | PASS    | PASS   | chained KeyGen → Sign → Verify       |
 
-The following instructions will allow you to compile and run a Verilator model of the CVA6 APU (which instantiates the CVA6 core) within the CVA6 APU testbench (corev_apu/tb).
+Run a single phase from `corev_apu/fpga/sim/mldsa/<phase>/<mode>/run.sh`.
 
-Throughout all build and simulations scripts executions, you can use the environment variable `NUM_JOBS` to set the number of concurrent jobs launched by `make`:
-- if left undefined, `NUM_JOBS` will default to 1, resulting in a sequential execution
-of `make` jobs;
-- when setting `NUM_JOBS` to an explicit value, it is recommended not to exceed 2/3 of
-the total number of virtual cores available on your system.    
+## Quick start
 
-1. Checkout the repository and initialize all submodules.
-```sh
-git clone https://github.com/openhwgroup/cva6.git
-cd cva6
-git submodule update --init --recursive
+```bash
+# 1. Clone with submodule
+git clone --recursive https://github.com/quasar-NRF/cva6-mldsa.git
+cd cva6-mldsa
+
+# 2. Run the standalone KeyGen simulation
+cd corev_apu/fpga/sim/mldsa/keygen/standalone
+./run.sh 1           # 1 KAT vector; pass/fail printed at end
 ```
 
-2. Install the GCC Toolchain [build prerequisites](util/toolchain-builder/README.md#Prerequisites) then [the toolchain itself](util/toolchain-builder/README.md#Getting-started).
+See `CVA6_MLDSA_INTEGRATION.md` for FPGA build, program, and debug flows.
 
-:warning: It is **strongly recommended** to use the toolchain built with the provided scripts.
-
-3. Install `cmake`, version 3.14 or higher.
-
-4. Set the RISCV environment variable.
-```sh
-export RISCV=/path/to/toolchain/installation/directory
-```
-
-5. Install `help2man` and `device-tree-compiler` packages.
-
-For Debian-based Linux distributions, run :
-
-```sh
-sudo apt-get install help2man device-tree-compiler
-```
-
-6. Install the riscv-dv requirements:
-
-```sh
-pip3 install -r verif/sim/dv/requirements.txt
-```
-
-7. Run these commands to install a custom Spike and Verilator (i.e. these versions must be used to simulate the CVA6) and [these](#running-regression-tests-simulations) tests suites.
-```sh
-# DV_SIMULATORS is detailed in the next section
-export DV_SIMULATORS=veri-testharness,spike
-bash verif/regress/smoke-tests.sh
-```
-
-
-# Tutorials
-
-* **[Running Simulations](tutorials/running_sim.md)**
-* **[ASIC Implementation](tutorials/asic.md)**
-* **[FPGA Implementation and running an OS](tutorials/fpga.md)**
-* **[Instruction Tracing](corev_apu/instr_tracing/README.md)**
-
-# Directory Structure
-
-The directory structure separates the [CVA6 RISC-V CPU](#cva6-risc-v-cpu) core from the [CORE-V-APU FPGA Emulation Platform](#corev-apu-fpga-emulation).
-Files, directories and submodules under `cva6` are for the core _only_ and should not have any dependencies on the APU.
-Files, directories and submodules under `corev_apu` are for the FPGA Emulation platform.
-The CVA6 core can be compiled stand-alone, and obviously the APU is dependent on the core.
-
-The top-level directories of this repo:
-* **ci**: Scriptware for CI.
-* **common**: Source code used by both the CVA6 Core and the COREV APU. Subdirectories from here are `local` for common files that are hosted in this repo and `submodules` that are hosted in other repos.
-* **core**: Source code for the CVA6 Core only. There should be no sources in this directory used to build anything other than the CVA6 core.
-* **corev_apu**: Source code for the CVA6 APU, exclusive of the CVA6 core. There should be no sources in this directory used to build the CVA6 core.
-* **docs**: Documentation.
-* **pd**: Example and CI scripts to synthesis CVA6.
-* **util**: General utility scriptware.
-* **vendor**: Third-party IP maintained outside the repository.
-* **verif**: Verification environment for the CVA6. The verification files shared with other cores are in the [core-v-verif](https://github.com/openhwgroup/core-v-verif) repository on GitHub. core-v-verif is defined as a cva6 submodule.
-
-
-## verif Directories
-
-- **bsp**:     board support package for test-programs compiled/assembled/linked for the CVA6.
-This BSP is used by both `core` testbench and `uvmt_cva6` UVM verification environment.
-- **regress**: scripts to install tools, test suites, CVA6 code and to execute tests
-- **sim**:     simulation environment (e.g. riscv-dv)
-- **tb**:      testbench module instancing the core
-- **tests**:   source of test cases and test lists
-
-
-# Contributing
-
-We highly appreciate community contributions.
-To ease the work of reviewing contributions, please review [CONTRIBUTING](CONTRIBUTING.md).
-
-Contributions to the documentation (`docs/` and `tutorials/` directories) are very welcome as well.
-
-If you find any problems or issues with CVA6 or the documentation, please check out the [issue tracker](https://github.com/openhwgroup/cva6/issues)
-and create a new issue if your problem is not yet tracked. \
-[The CVA6 Kanban Board](https://github.com/orgs/openhwgroup/project/3/view/7) loosely tracks planned improvements.
-
-
-# Publication
-
-If you use CVA6 in your academic work you can cite us:
-
-<details>
-<summary>CVA6 Publication</summary>
+## Repository layout
 
 ```
-@article{zaruba2019cost,
-   author={F. {Zaruba} and L. {Benini}},
-   journal={IEEE Transactions on Very Large Scale Integration (VLSI) Systems},
-   title={The Cost of Application-Class Processing: Energy and Performance Analysis of a Linux-Ready 1.7-GHz 64-Bit RISC-V Core in 22-nm FDSOI Technology},
-   year={2019},
-   volume={27},
-   number={11},
-   pages={2629-2640},
-   doi={10.1109/TVLSI.2019.2926114},
-   ISSN={1557-9999},
-   month={Nov},
-}
+cva6-mldsa/
+├── core/                              # upstream CVA6 core (untouched)
+├── corev_apu/
+│   ├── fpga/
+│   │   ├── sim/mldsa/                 # NEW: XSIM testbench suite
+│   │   ├── src/
+│   │   │   ├── ML-DSA-OSH/            # submodule (quasar-NRF/ML-DSA-OSH)
+│   │   │   ├── axi_mldsa_bridge.sv    # NEW: AXI ↔ accelerator bridge
+│   │   │   └── ariane_xilinx.sv       # modified: wires bridge into SoC
+│   │   └── sw/                        # NEW: bare-metal test firmware
+│   └── tb/ariane_soc_pkg.sv           # modified: address map
+├── CVA6_MLDSA_INTEGRATION.md          # primary design doc
+├── MLDSA_BUGS_REPORT.md
+├── MLDSA_FPGA_TIMING_REPORT.md
+└── PROJECT_STATUS.md
 ```
 
-</details>
+## Accelerator programming interface (64-bit AXI)
 
-# Acknowledgements
+| Offset | Reg       | R/W | Meaning                                              |
+|--------|-----------|-----|------------------------------------------------------|
+| 0x00   | CTRL      | WO  | bit0=start, bits[2:1]=mode, bits[5:3]=sec_lvl        |
+| 0x08   | DATA_IN   | WO  | push 64-bit word into accelerator input FIFO         |
+| 0x10   | DATA_OUT  | RO  | pop 64-bit word from accelerator output FIFO         |
+| 0x18   | STATUS    | RO  | bit0=done, bit1=fail, bit2=input_empty, bit3=out_full|
 
-Check out the [acknowledgements](ACKNOWLEDGEMENTS.md).
+Modes: `0=KeyGen, 1=Sign, 2=Verify`. Security levels `2/3/5` are
+selectable at runtime via CTRL[5:3].
 
+## Upstream attribution
 
+The CVA6 core is © OpenHW Group, Apache-2.0. The ML-DSA-OSH accelerator
+is © KU Leuven COSIC, MIT. See `LICENSE` and the submodule for details.
+This fork's integration work is released under the same licenses.
+
+## Author
+
+Giulio Golinelli — `golinelli.giulio13@gmail.com`
+TUMCREATE — QUASAR Research Engineer
+
+## References
+
+- FIPS 204, *Module-Lattice Digital Signature Algorithm*,
+  [NIST (2024)](https://doi.org/10.6028/NIST.FIPS.204).
+- Beckwith et al., *NTT Multiplication for NTT-Unfriendly Rings…*,
+  [IACR ePrint 2021/1451](https://eprint.iacr.org/2021/1451).
+- CVA6 user manual — <https://docs.openhwgroup.org/projects/cva6-user-manual/>.

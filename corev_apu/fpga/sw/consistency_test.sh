@@ -1,3 +1,11 @@
+# ==================================================
+# Giulio Golinelli - golinelli.giulio13@gmail.com
+# TUMCREATE QUASAR RESEARCH ENGINEER
+# Modified: 2026-06-17
+# This file contains modifications vs. the upstream
+# CVA6 / ML-DSA-OSH source fork.
+# ==================================================
+
 #!/bin/bash
 # Run ML-DSA test N times and capture results for consistency checking.
 # Usage: ./consistency_test.sh <bitstream.bit> <test.c|test.elf> <num_runs> [--no-program]
