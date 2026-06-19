@@ -403,4 +403,72 @@ module axi_mldsa_bridge #(
 
     // fix: debug instrumentation (BRG transition log) removed after FIFO depth + T0 stall fix verified.
 
+    // -----------------------------------------------------------------------
+    // TUMCREATE DEBUG (2026-06-19): bridge FIFO visibility for Verify@2 bug.
+    // Logs every silent drop (FIFO full when AXI write lands) and every push
+    // during Verify mode. Gated by `BRG_DEBUG define so production builds skip.
+    // See memory project_sign2_e2e_bug.md for context.
+    // -----------------------------------------------------------------------
+`ifdef BRG_DEBUG
+    logic [31:0] brg_push_ctr;
+    logic [31:0] brg_drop_ctr;
+    logic [31:0] brg_pop_ctr;
+
+    always_ff @(posedge clk_i or negedge rst_ni) begin
+        if (!rst_ni) begin
+            brg_push_ctr <= 32'd0;
+            brg_drop_ctr <= 32'd0;
+            brg_pop_ctr  <= 32'd0;
+        end else begin
+            if (ctrl_start_rise) begin
+                brg_push_ctr <= 32'd0;
+                brg_drop_ctr <= 32'd0;
+                brg_pop_ctr  <= 32'd0;
+            end else begin
+                // Silent-drop detector: data_in_wr_q asserted but FIFO full
+                if (data_in_wr_q && in_count[FIFO_ADDR_W]) begin
+                    brg_drop_ctr <= brg_drop_ctr + 1'b1;
+                    $display("[BRG %0t] DROP idx=%0d data=0x%016x in_count=%0d (FIFO FULL)",
+                             $time, brg_drop_ctr, data_in_reg, in_count);
+                end
+                // Push tracker (only during Verify mode to limit log volume)
+                if (in_push && ctrl_mode == 2'd1) begin
+                    brg_push_ctr <= brg_push_ctr + 1'b1;
+                    $display("[BRG %0t] PUSH idx=%0d data=0x%016x in_count=%0d->%0d",
+                             $time, brg_push_ctr, data_in_reg, in_count, in_count + 1'b1);
+                end
+                // Pop tracker during Verify
+                if (in_pop && ctrl_mode == 2'd1) begin
+                    brg_pop_ctr <= brg_pop_ctr + 1'b1;
+                    $display("[BRG %0t] POP  idx=%0d data=0x%016x in_count=%0d->%0d",
+                             $time, brg_pop_ctr, in_fifo[in_head], in_count, in_count - 1'b1);
+                end
+                // Output FIFO push tracker during Verify
+                // (catches spurious accelerator output during input phase)
+                if (out_push && ctrl_mode == 2'd1) begin
+                    $display("[BRG %0t] OUTPUSH data=0x%016x out_count=%0d->%0d in_count=%0d",
+                             $time, data_o_i, out_count, out_count + 1'b1, in_count);
+                end
+                // Output FIFO pop tracker during Verify
+                if (out_pop && ctrl_mode == 2'd1) begin
+                    $display("[BRG %0t] OUTPOP  data=0x%016x out_count=%0d->%0d",
+                             $time, out_fifo[out_head], out_count, out_count - 1'b1);
+                end
+            end
+        end
+    end
+
+    // Phase-start snapshot
+    always_ff @(posedge clk_i or negedge rst_ni) begin
+        if (!rst_ni) begin
+            // no-op
+        end else begin
+            if (ctrl_start_rise) begin
+                $display("[BRG %0t] PHASE_START mode=%0d sec_lvl=%0d in_count=%0d out_count=%0d",
+                         $time, ctrl_mode, ctrl_sec_lvl, in_count, out_count);
+            end
+        end
+    end
+`endif
+
 endmodule

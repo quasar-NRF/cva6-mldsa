@@ -1,7 +1,7 @@
 // ==================================================
 // Giulio Golinelli - golinelli.giulio13@gmail.com
 // TUMCREATE QUASAR RESEARCH ENGINEER
-// Modified: 2026-06-17
+// Modified: 2026-06-18
 // This file contains modifications vs. the upstream
 // CVA6 / ML-DSA-OSH source fork.
 // ==================================================
@@ -17,12 +17,22 @@
 //   0x10 DATA_OUT [RO]  pop 64-bit word from output FIFO
 //   0x18 STATUS   [RO]  [0]=in_empty [2]=out_empty [6]=busy
 //   0x20 DIAG     [RO]  accelerator internal state
+//
+// TUMCREATE (M-A2, 2026-06-18): TB now level-aware. KAT arrays sized for sec_lvl=5
+// (largest); level-specific word counts via localparams selected by `SEC_LVL macro;
+// KAT filenames branched on `SEC_LVL.
 
 `include "mldsa_params.v"
 `include "axi/typedef.svh"
 `include "axi/assign.svh"
 
 `timescale 1ns / 1ps
+
+// TUMCREATE: Compile-time security level. Forwarded via xvlog/xelab -d SEC_LVL=X.
+// Default 3 (ML-DSA-65) for backward compatibility.
+`ifndef SEC_LVL
+  `define SEC_LVL 3
+`endif
 
 module tb_keygen_bridge;
 
@@ -83,15 +93,50 @@ module tb_keygen_bridge;
     .data_o  (data_o_i_w)
   );
 
-  // ----------------------------- KAT storage (sec_lvl=3 only) -----------------------------
-  localparam NUM_TV = 1;
-  reg [`SEED_WIDTH - 1 : 0]   seed_3  [NUM_TV - 1 : 0];
-  reg [0 : `PK_WIDTH_3 - 1]   pk_3    [NUM_TV - 1 : 0];
-  reg [0 : `SK_WIDTH_3 - 1]   sk_3    [NUM_TV - 1 : 0];
+  // ----------------------------- Level-mapping localparams (TUMCREATE M-A2) -----------------------------
+  // Compile-time selection of byte/word counts based on `SEC_LVL.
+  // KAT arrays sized for the largest case (sec_lvl=5) to cover all levels.
+  localparam integer PK_BYTES_L     = (`SEC_LVL == 2) ? `PK_BYTES_2   : (`SEC_LVL == 3) ? `PK_BYTES_3   : `PK_BYTES_5;
+  localparam integer SK_BYTES_L     = (`SEC_LVL == 2) ? `SK_BYTES_2   : (`SEC_LVL == 3) ? `SK_BYTES_3   : `SK_BYTES_5;
+  localparam integer SK_s1_BYTES_L  = (`SEC_LVL == 2) ? `SK_s1_BYTES_2 : (`SEC_LVL == 3) ? `SK_s1_BYTES_3 : `SK_s1_BYTES_5;
+  localparam integer SK_s2_BYTES_L  = (`SEC_LVL == 2) ? `SK_s2_BYTES_2 : (`SEC_LVL == 3) ? `SK_s2_BYTES_3 : `SK_s2_BYTES_5;
+  localparam integer SK_t0_BYTES_L  = (`SEC_LVL == 2) ? `SK_t0_BYTES_2 : (`SEC_LVL == 3) ? `SK_t0_BYTES_3 : `SK_t0_BYTES_5;
+  localparam integer PK_t1_BYTES_L  = (`SEC_LVL == 2) ? `PK_t1_BYTES_2 : (`SEC_LVL == 3) ? `PK_t1_BYTES_3 : `PK_t1_BYTES_5;
 
-  // Captured output buffers (same layout as standalone TB)
-  reg [0 : `PK_WIDTH_3 - 1]   pk_out;
-  reg [0 : `SK_WIDTH_3 - 1]   sk_out;
+  // Per-region word counts (each word = 8 bytes)
+  localparam integer RHO_WORDS  = 4;                               // 32 bytes
+  localparam integer K_WORDS    = 4;                               // 32 bytes
+  localparam integer TR_WORDS   = 8;                               // 64 bytes
+  localparam integer S1_WORDS   = SK_s1_BYTES_L / 8;
+  localparam integer S2_WORDS   = SK_s2_BYTES_L / 8;
+  localparam integer T0_WORDS   = SK_t0_BYTES_L / 8;
+  localparam integer T1_WORDS   = PK_t1_BYTES_L / 8;
+
+  // Cumulative word index thresholds for output draining (word order: rho, K, s1, s2, t1, t0, tr)
+  localparam integer RHO_W_END  = RHO_WORDS;
+  localparam integer K_W_END    = RHO_W_END + K_WORDS;
+  localparam integer S1_W_END   = K_W_END   + S1_WORDS;
+  localparam integer S2_W_END   = S1_W_END  + S2_WORDS;
+  localparam integer T1_W_END   = S2_W_END  + T1_WORDS;
+  localparam integer T0_W_END   = T1_W_END  + T0_WORDS;
+  localparam integer TR_W_END   = T0_W_END  + TR_WORDS;
+  localparam integer TOTAL_OUT_WORDS = TR_W_END;
+
+  // ----------------------------- KAT storage (level-specific widths) -----------------------------
+  // TUMCREATE M-A2 (2026-06-18): width MUST match KAT line length exactly.
+  // Earlier attempt used a widest-case container (PK_WIDTH_5) but XSIM $readmemh
+  // mis-aligns when the loaded hex string is shorter than the container width.
+  // Level-specific localparams avoid that pitfall.
+  localparam integer PK_ARR_W = (`SEC_LVL == 2) ? `PK_WIDTH_2 : (`SEC_LVL == 3) ? `PK_WIDTH_3 : `PK_WIDTH_5;
+  localparam integer SK_ARR_W = (`SEC_LVL == 2) ? `SK_WIDTH_2 : (`SEC_LVL == 3) ? `SK_WIDTH_3 : `SK_WIDTH_5;
+  localparam NUM_TV = 1;
+  reg [`SEED_WIDTH - 1 : 0]   seed  [NUM_TV - 1 : 0];
+  reg [0 : PK_ARR_W - 1]      pk    [NUM_TV - 1 : 0];
+  reg [0 : SK_ARR_W - 1]      sk    [NUM_TV - 1 : 0];
+
+  // Captured output buffers (level-specific widths)
+  reg [0 : PK_ARR_W - 1]      pk_out;
+  reg [0 : SK_ARR_W - 1]      sk_out;
 
   integer c;       // KAT index
   integer i;       // byte index for compare
@@ -183,10 +228,20 @@ module tb_keygen_bridge;
     axi.aw_valid = 1'b0; axi.w_valid = 1'b0; axi.b_ready = 1'b0;
     axi.ar_valid = 1'b0; axi.r_ready = 1'b0;
 
-    // Load KAT
-    $readmemh("KeyGen_seed_65.txt", seed_3, 0, 0);
-    $readmemh("KeyGen_pk_65.txt",   pk_3, 0, 0);
-    $readmemh("KeyGen_sk_65.txt",   sk_3, 0, 0);
+    // Load KAT (TUMCREATE M-A2: branched on `SEC_LVL for level-specific KAT files)
+    if (`SEC_LVL == 2) begin
+      $readmemh("KeyGen_seed_44.txt", seed, 0, 0);
+      $readmemh("KeyGen_pk_44.txt",   pk,   0, 0);
+      $readmemh("KeyGen_sk_44.txt",   sk,   0, 0);
+    end else if (`SEC_LVL == 3) begin
+      $readmemh("KeyGen_seed_65.txt", seed, 0, 0);
+      $readmemh("KeyGen_pk_65.txt",   pk,   0, 0);
+      $readmemh("KeyGen_sk_65.txt",   sk,   0, 0);
+    end else begin
+      $readmemh("KeyGen_seed_87.txt", seed, 0, 0);
+      $readmemh("KeyGen_pk_87.txt",   pk,   0, 0);
+      $readmemh("KeyGen_sk_87.txt",   sk,   0, 0);
+    end
 
     pk_out = 0;
     sk_out = 0;
@@ -200,59 +255,58 @@ module tb_keygen_bridge;
     rst_n = 1;
     repeat (5) @(posedge clk);
 
-    $display("=== [Bridge KeyGen] Starting KAT #%0d ===", c);
+    $display("=== [Bridge KeyGen] Starting KAT #%0d (sec_lvl=%0d, out_words=%0d) ===",
+             c, `SEC_LVL, TOTAL_OUT_WORDS);
     start_time = $time;
 
     // ---------- Push 4 seed words via DATA_IN ----------
     // Word order: MSB-first (seed[255:192], then 191:128, 127:64, 63:0)
-    // The standalone TB sends word 0 during init phase too, then 1..3 during send.
-    // For the bridge, just push all 4 directly.
-    axi_write(64'h08, seed_3[c][`SEED_WIDTH - 1   -: 64]);
-    axi_write(64'h08, seed_3[c][`SEED_WIDTH - 65  -: 64]);
-    axi_write(64'h08, seed_3[c][`SEED_WIDTH - 129 -: 64]);
-    axi_write(64'h08, seed_3[c][`SEED_WIDTH - 193 -: 64]);
-    $display("  Pushed 4 seed words. SEED=%h...", seed_3[c][255:0]);
+    axi_write(64'h08, seed[c][`SEED_WIDTH - 1   -: 64]);
+    axi_write(64'h08, seed[c][`SEED_WIDTH - 65  -: 64]);
+    axi_write(64'h08, seed[c][`SEED_WIDTH - 129 -: 64]);
+    axi_write(64'h08, seed[c][`SEED_WIDTH - 193 -: 64]);
+    $display("  Pushed 4 seed words. SEED=%h...", seed[c][255:0]);
 
     // ---------- Start KeyGen ----------
-    // CTRL = (sec_lvl=3 << 3) | (mode=0 << 1) | start=1 = 0x19
-    axi_write(64'h00, 64'h19);
-    $display("  Wrote CTRL=0x19 (mode=KeyGen, sec_lvl=3, start=1)");
+    // TUMCREATE: CTRL = (sec_lvl << 3) | (mode=0 << 1) | start=1.
+    // For sec_lvl=2 → 0x11; sec_lvl=3 → 0x19; sec_lvl=5 → 0x29.
+    axi_write(64'h00, ((`SEC_LVL & 8'h07) << 3) | 8'h01);
+    $display("  Wrote CTRL=%02xh (mode=KeyGen, sec_lvl=%0d, start=1)", ((`SEC_LVL & 8'h07) << 3) | 8'h01, `SEC_LVL);
 
-    // ---------- Drain DATA_OUT continuously until all 744 words received ----------
+    // ---------- Drain DATA_OUT continuously until all TOTAL_OUT_WORDS received ----------
     // Output FIFO is only 128 deep, so we MUST drain as the accelerator produces.
-    // Otherwise FIFO fills, ready_o_o drops, accelerator stalls.
-    // Word order: rho(4) -> K(4) -> s1(80) -> s2(96) -> t1(240) -> t0(312) -> tr(8) = 744 total
+    // Word order (all levels): rho(4) -> K(4) -> s1(L) -> s2(K) -> t1(K) -> t0(K) -> tr(8).
     wr_idx = 0;
-    while (wr_idx < 744) begin
+    while (wr_idx < TOTAL_OUT_WORDS) begin
       axi_read(64'h18, status_r);
       if (status_r[2] === 1'b0) begin  // !out_empty
         axi_read(64'h10, data_r);
         // Route word to appropriate buffer based on global index
-        if (wr_idx < 4) begin
-          // rho: words 0-3 -> pk[0+] AND sk[0+]
+        if (wr_idx < RHO_W_END) begin
+          // rho: words 0..RHO_W_END-1 -> pk[0+] AND sk[0+]
           pk_out[wr_idx*64 +: 64] = data_r;
           sk_out[wr_idx*64 +: 64] = data_r;
-        end else if (wr_idx < 8) begin
-          // K: words 4-7 -> sk[RHO+]
-          sk_out[`SKPK_RHO_WIDTH + (wr_idx-4)*64 +: 64] = data_r;
-        end else if (wr_idx < 88) begin
-          // s1: words 8-87 -> sk[RHO+K+tr+]
-          sk_out[`SKPK_RHO_WIDTH + `SK_K_WIDTH + `SK_tr_WIDTH + (wr_idx-8)*64 +: 64] = data_r;
-        end else if (wr_idx < 184) begin
-          // s2: words 88-183 -> sk[RHO+K+tr+s1+]
-          sk_out[`SKPK_RHO_WIDTH + `SK_K_WIDTH + `SK_tr_WIDTH + `SK_s1_WIDTH_3 + (wr_idx-88)*64 +: 64] = data_r;
-        end else if (wr_idx < 424) begin
-          // t1: words 184-423 -> pk[RHO+]
-          pk_out[`SKPK_RHO_WIDTH + (wr_idx-184)*64 +: 64] = data_r;
-        end else if (wr_idx < 736) begin
-          // t0: words 424-735 -> sk[RHO+K+tr+s1+s2+]
-          sk_out[`SKPK_RHO_WIDTH + `SK_K_WIDTH + `SK_tr_WIDTH + `SK_s1_WIDTH_3 + `SK_s2_WIDTH_3 + (wr_idx-424)*64 +: 64] = data_r;
+        end else if (wr_idx < K_W_END) begin
+          // K: words RHO_W_END..K_W_END-1 -> sk[RHO+]
+          sk_out[`SKPK_RHO_WIDTH + (wr_idx - RHO_W_END)*64 +: 64] = data_r;
+        end else if (wr_idx < S1_W_END) begin
+          // s1: -> sk[RHO+K+tr+]
+          sk_out[`SKPK_RHO_WIDTH + `SK_K_WIDTH + `SK_tr_WIDTH + (wr_idx - K_W_END)*64 +: 64] = data_r;
+        end else if (wr_idx < S2_W_END) begin
+          // s2: -> sk[RHO+K+tr+s1+]
+          sk_out[`SKPK_RHO_WIDTH + `SK_K_WIDTH + `SK_tr_WIDTH + SK_s1_BYTES_L*8 + (wr_idx - S1_W_END)*64 +: 64] = data_r;
+        end else if (wr_idx < T1_W_END) begin
+          // t1: -> pk[RHO+]
+          pk_out[`SKPK_RHO_WIDTH + (wr_idx - S2_W_END)*64 +: 64] = data_r;
+        end else if (wr_idx < T0_W_END) begin
+          // t0: -> sk[RHO+K+tr+s1+s2+]
+          sk_out[`SKPK_RHO_WIDTH + `SK_K_WIDTH + `SK_tr_WIDTH + SK_s1_BYTES_L*8 + SK_s2_BYTES_L*8 + (wr_idx - T1_W_END)*64 +: 64] = data_r;
         end else begin
-          // tr: words 736-743 -> sk[RHO+K+]  (tr is sent LAST by accelerator)
-          sk_out[`SKPK_RHO_WIDTH + `SK_K_WIDTH + (wr_idx-736)*64 +: 64] = data_r;
+          // tr: -> sk[RHO+K+]  (tr is sent LAST by accelerator)
+          sk_out[`SKPK_RHO_WIDTH + `SK_K_WIDTH + (wr_idx - T0_W_END)*64 +: 64] = data_r;
         end
         wr_idx = wr_idx + 1;
-        if (wr_idx % 100 == 0) $display("  Drain progress: %0d/744 words", wr_idx);
+        if (wr_idx % 100 == 0) $display("  Drain progress: %0d/%0d words", wr_idx, TOTAL_OUT_WORDS);
       end else begin
         // FIFO empty: wait a bit for accelerator to produce more
         repeat (20) @(posedge clk);
@@ -262,30 +316,30 @@ module tb_keygen_bridge;
     $display("  Drain complete: %0d words, STATUS=%b, cycles=%0d", wr_idx, status_r[6:0], total_cycles);
 
     // ---------- Compare PK ----------
-    for (i = 0; i < `PK_BYTES_3; i = i + 1) begin
-      if (pk_out[i*8 +: 8] !== pk_3[c][i*8 +: 8]) begin
+    for (i = 0; i < PK_BYTES_L; i = i + 1) begin
+      if (pk_out[i*8 +: 8] !== pk[c][i*8 +: 8]) begin
         wrong_pk_bytes = wrong_pk_bytes + 1;
         if (wrong_pk_bytes <= 10) begin
           $display("[Bridge KeyGen KAT#%0d, byte pk{%0d}] WRONG: Expected %h, received %h",
-                   c, i+1, pk_3[c][i*8 +: 8], pk_out[i*8 +: 8]);
+                   c, i+1, pk[c][i*8 +: 8], pk_out[i*8 +: 8]);
         end
       end
     end
 
     // ---------- Compare SK ----------
-    for (i = 0; i < `SK_BYTES_3; i = i + 1) begin
-      if (sk_out[i*8 +: 8] !== sk_3[c][i*8 +: 8]) begin
+    for (i = 0; i < SK_BYTES_L; i = i + 1) begin
+      if (sk_out[i*8 +: 8] !== sk[c][i*8 +: 8]) begin
         wrong_sk_bytes = wrong_sk_bytes + 1;
         if (wrong_sk_bytes <= 10) begin
           $display("[Bridge KeyGen KAT#%0d, byte sk{%0d}] WRONG: Expected %h, received %h",
-                   c, i+1, sk_3[c][i*8 +: 8], sk_out[i*8 +: 8]);
+                   c, i+1, sk[c][i*8 +: 8], sk_out[i*8 +: 8]);
         end
       end
     end
 
     $display("");
     $display("=== [Bridge KeyGen] RESULT: PK wrong=%0d / %0d, SK wrong=%0d / %0d, cycles=%0d ===",
-             wrong_pk_bytes, `PK_BYTES_3, wrong_sk_bytes, `SK_BYTES_3, total_cycles);
+             wrong_pk_bytes, PK_BYTES_L, wrong_sk_bytes, SK_BYTES_L, total_cycles);
 
     if (wrong_pk_bytes == 0 && wrong_sk_bytes == 0) begin
       $display("testbench done - PASS");

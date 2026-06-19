@@ -1,7 +1,7 @@
 // ==================================================
 // Giulio Golinelli - golinelli.giulio13@gmail.com
 // TUMCREATE QUASAR RESEARCH ENGINEER
-// Modified: 2026-06-17
+// Modified: 2026-06-18
 // This file contains modifications vs. the upstream
 // CVA6 / ML-DSA-OSH source fork.
 // ==================================================
@@ -18,22 +18,22 @@
 //   0x18 STATUS   [RO]  [0]=in_empty [2]=out_empty [6]=busy
 //   0x20 DIAG     [RO]  accelerator internal state
 //
-// Verify input word sequence (sec_lvl=3, K=6, L=5):
-//   1. PK rho       : 4 words   (32B)
-//   2. c_tilde      : 6 words   (48B)
-//   3. z            : 400 words (3200B)
-//   4. PK t1        : 240 words (1920B)
-//   5. mlen+ctxlen  : 1 word
-//   6. message_fmtd : ceil((2 + ctxlen + mlen) / 8) words
-//   7. h            : 8 words   (61B, last padded)
-//
-// Verify output: 1 word, bit 0 = fail (0=valid, 1=invalid)
+// TUMCREATE (M-A4, 2026-06-18): TB now level-aware. KAT arrays sized for the
+// active level only (XSIM $readmemh mis-aligns when container is wider than
+// KAT line); word counts and offsets via localparams selected by `SEC_LVL;
+// KAT filenames branched on `SEC_LVL.
 
 `include "mldsa_params.v"
 `include "axi/typedef.svh"
 `include "axi/assign.svh"
 
 `timescale 1ns / 1ps
+
+// TUMCREATE: Compile-time security level. Forwarded via xvlog/xelab -d SEC_LVL=X.
+// Default 3 (ML-DSA-65) for backward compatibility.
+`ifndef SEC_LVL
+  `define SEC_LVL 3
+`endif
 
 module tb_verify_bridge;
 
@@ -94,22 +94,44 @@ module tb_verify_bridge;
     .data_o  (data_o_i_w)
   );
 
-  // ----------------------------- KAT storage (sec_lvl=3 only) -----------------------------
-  localparam NUM_TV = 1;
-  localparam MAX_MLEN_3 = 8192*8;
+  // ----------------------------- Level-mapping localparams (TUMCREATE M-A4) -----------------------------
+  localparam integer PK_BYTES_L     = (`SEC_LVL == 2) ? `PK_BYTES_2   : (`SEC_LVL == 3) ? `PK_BYTES_3   : `PK_BYTES_5;
+  localparam integer SK_s1_BYTES_L  = (`SEC_LVL == 2) ? `SK_s1_BYTES_2 : (`SEC_LVL == 3) ? `SK_s1_BYTES_3 : `SK_s1_BYTES_5;
+  localparam integer SK_s2_BYTES_L  = (`SEC_LVL == 2) ? `SK_s2_BYTES_2 : (`SEC_LVL == 3) ? `SK_s2_BYTES_3 : `SK_s2_BYTES_5;
+  localparam integer SK_t0_BYTES_L  = (`SEC_LVL == 2) ? `SK_t0_BYTES_2 : (`SEC_LVL == 3) ? `SK_t0_BYTES_3 : `SK_t0_BYTES_5;
+  localparam integer PK_t1_BYTES_L  = (`SEC_LVL == 2) ? `PK_t1_BYTES_2 : (`SEC_LVL == 3) ? `PK_t1_BYTES_3 : `PK_t1_BYTES_5;
+  localparam integer SIG_BYTES_L    = (`SEC_LVL == 2) ? `SIG_BYTES_2   : (`SEC_LVL == 3) ? `SIG_BYTES_3   : `SIG_BYTES_5;
+  localparam integer CTILDE_BYTES_L = (`SEC_LVL == 2) ? `CTILDE_BYTES_2 : (`SEC_LVL == 3) ? `CTILDE_BYTES_3 : `CTILDE_BYTES_5;
+  localparam integer z_BYTES_L      = (`SEC_LVL == 2) ? `z_BYTES_2     : (`SEC_LVL == 3) ? `z_BYTES_3     : `z_BYTES_5;
+  localparam integer h_BYTES_L      = (`SEC_LVL == 2) ? `h_BYTES_2     : (`SEC_LVL == 3) ? `h_BYTES_3     : `h_BYTES_5;
 
-  // Raw KAT inputs
-  reg [0 : `PK_BYTES_3*8 - 1]    pk_3      [NUM_TV - 1 : 0];
-  reg [0 : MAX_MLEN_3 - 1]       message_3 [NUM_TV - 1 : 0];
-  reg [31:0]                     mlen_3    [NUM_TV - 1 : 0];
-  reg [0 : `CTX_WIDTH - 1]       context_3 [NUM_TV - 1 : 0];
-  reg [31:0]                     ctxlen_3  [NUM_TV - 1 : 0];
-  reg [0 : `SIG_WIDTH_3 - 1]     sig_3     [NUM_TV - 1 : 0];
+  localparam integer PK_ARR_W  = (`SEC_LVL == 2) ? `PK_WIDTH_2  : (`SEC_LVL == 3) ? `PK_WIDTH_3  : `PK_WIDTH_5;
+  localparam integer SIG_ARR_W = (`SEC_LVL == 2) ? `SIG_WIDTH_2 : (`SEC_LVL == 3) ? `SIG_WIDTH_3 : `SIG_WIDTH_5;
+  localparam integer CTILDE_W  = (`SEC_LVL == 2) ? `CTILDE_WIDTH_2 : (`SEC_LVL == 3) ? `CTILDE_WIDTH_3 : `CTILDE_WIDTH_5;
+  localparam integer z_WIDTH_L = (`SEC_LVL == 2) ? `z_WIDTH_2   : (`SEC_LVL == 3) ? `z_WIDTH_3   : `z_WIDTH_5;
+
+  // Per-region word counts (each word = 8 bytes)
+  localparam integer RHO_WORDS      = 4;
+  localparam integer CTILDE_WORDS   = CTILDE_BYTES_L / 8;     // 4 / 6 / 8
+  localparam integer z_WORDS        = z_BYTES_L / 8;          // 288 / 400 / 560
+  localparam integer T1_WORDS       = PK_t1_BYTES_L / 8;      // 160 / 240 / 320
+  localparam integer h_WORDS        = (h_BYTES_L + 7) / 8;    // 11 / 8 / 11 (padded)
+
+  // ----------------------------- KAT storage (level-specific widths) -----------------------------
+  localparam NUM_TV = 1;
+  localparam MAX_MLEN = 8192*8;
+
+  reg [0 : PK_ARR_W - 1]        pk        [NUM_TV - 1 : 0];
+  reg [0 : MAX_MLEN - 1]        message   [NUM_TV - 1 : 0];
+  reg [31:0]                    mlen      [NUM_TV - 1 : 0];
+  reg [0 : `CTX_WIDTH - 1]      ctx       [NUM_TV - 1 : 0];
+  reg [31:0]                    ctxlen    [NUM_TV - 1 : 0];
+  reg [0 : SIG_ARR_W - 1]       sig       [NUM_TV - 1 : 0];
   // Expected output: 1 bit per KAT (0=valid, 1=invalid)
-  reg [0 : 0]                    verif_3   [NUM_TV - 1 : 0];
+  reg [0 : 0]                   verif     [NUM_TV - 1 : 0];
 
   // Formatted message buffer: [0] || ctxlen || ctx || msg
-  reg [0 : MAX_MLEN_3 + 2*8 + `CTX_WIDTH - 1] message_fmtd_3 [NUM_TV - 1 : 0];
+  reg [0 : MAX_MLEN + 2*8 + `CTX_WIDTH - 1] message_fmtd [NUM_TV - 1 : 0];
 
   integer c, i, j;
   integer wr_idx;
@@ -211,32 +233,49 @@ module tb_verify_bridge;
     axi.aw_valid = 1'b0; axi.w_valid = 1'b0; axi.b_ready = 1'b0;
     axi.ar_valid = 1'b0; axi.r_ready = 1'b0;
 
-    // Load KAT
-    $readmemh("SigVer_pk_65.txt",         pk_3, 0, 0);
-    $readmemh("SigVer_message_65.txt",    message_3, 0, 0);
-    $readmemh("SigVer_mlen_65.txt",       mlen_3, 0, 0);
-    $readmemh("SigVer_ctx_65.txt",        context_3, 0, 0);
-    $readmemh("SigVer_ctxlen_65.txt",     ctxlen_3, 0, 0);
-    $readmemh("SigVer_signature_65.txt",  sig_3, 0, 0);
-    $readmemb("SigVer_result_65.txt",     verif_3);
+    // Load KAT (TUMCREATE M-A4: branched on `SEC_LVL)
+    if (`SEC_LVL == 2) begin
+      $readmemh("SigVer_pk_44.txt",         pk, 0, 0);
+      $readmemh("SigVer_message_44.txt",    message, 0, 0);
+      $readmemh("SigVer_mlen_44.txt",       mlen, 0, 0);
+      $readmemh("SigVer_ctx_44.txt",        ctx, 0, 0);
+      $readmemh("SigVer_ctxlen_44.txt",     ctxlen, 0, 0);
+      $readmemh("SigVer_signature_44.txt",  sig, 0, 0);
+      $readmemb("SigVer_result_44.txt",     verif);
+    end else if (`SEC_LVL == 3) begin
+      $readmemh("SigVer_pk_65.txt",         pk, 0, 0);
+      $readmemh("SigVer_message_65.txt",    message, 0, 0);
+      $readmemh("SigVer_mlen_65.txt",       mlen, 0, 0);
+      $readmemh("SigVer_ctx_65.txt",        ctx, 0, 0);
+      $readmemh("SigVer_ctxlen_65.txt",     ctxlen, 0, 0);
+      $readmemh("SigVer_signature_65.txt",  sig, 0, 0);
+      $readmemb("SigVer_result_65.txt",     verif);
+    end else begin
+      $readmemh("SigVer_pk_87.txt",         pk, 0, 0);
+      $readmemh("SigVer_message_87.txt",    message, 0, 0);
+      $readmemh("SigVer_mlen_87.txt",       mlen, 0, 0);
+      $readmemh("SigVer_ctx_87.txt",        ctx, 0, 0);
+      $readmemh("SigVer_ctxlen_87.txt",     ctxlen, 0, 0);
+      $readmemh("SigVer_signature_87.txt",  sig, 0, 0);
+      $readmemb("SigVer_result_87.txt",     verif);
+    end
 
     c = 0;
 
     // ---------- Build message_fmtd ----------
-    // Layout: [0] (1B) || ctxlen (1B) || ctx (ctxlen B) || message (mlen B)
-    message_fmtd_3[c] = 0;
-    message_fmtd_3[c][0 +: 8]  = 8'd0;
-    message_fmtd_3[c][8 +: 8]  = ctxlen_3[c][7:0];
-    for (i = 0; i < ctxlen_3[c]; i = i + 1) begin
-      message_fmtd_3[c][16 + i*8 +: 8] = context_3[c][(`CTX_BYTES - ctxlen_3[c])*8 + i*8 +: 8];
+    message_fmtd[c] = 0;
+    message_fmtd[c][0 +: 8]  = 8'd0;
+    message_fmtd[c][8 +: 8]  = ctxlen[c][7:0];
+    for (i = 0; i < ctxlen[c]; i = i + 1) begin
+      message_fmtd[c][16 + i*8 +: 8] = ctx[c][(`CTX_BYTES - ctxlen[c])*8 + i*8 +: 8];
     end
-    for (i = 0; i < mlen_3[c]; i = i + 1) begin
-      message_fmtd_3[c][16 + ctxlen_3[c]*8 + i*8 +: 8] = message_3[c][(MAX_MLEN_3 - mlen_3[c]*8) + i*8 +: 8];
+    for (i = 0; i < mlen[c]; i = i + 1) begin
+      message_fmtd[c][16 + ctxlen[c]*8 + i*8 +: 8] = message[c][(MAX_MLEN - mlen[c]*8) + i*8 +: 8];
     end
-    fmt_byte_len = 2 + ctxlen_3[c] + mlen_3[c];
+    fmt_byte_len = 2 + ctxlen[c] + mlen[c];
     fmt_word_len = (fmt_byte_len + 7) / 8;
-    $display("=== [Bridge Verify] KAT #%0d: mlen=%0d ctxlen=%0d, fmt_bytes=%0d fmt_words=%0d, expected_fail=%0d ===",
-             c, mlen_3[c], ctxlen_3[c], fmt_byte_len, fmt_word_len, verif_3[c]);
+    $display("=== [Bridge Verify] KAT #%0d (sec_lvl=%0d): mlen=%0d ctxlen=%0d, fmt_bytes=%0d fmt_words=%0d, expected_fail=%0d ===",
+             c, `SEC_LVL, mlen[c], ctxlen[c], fmt_byte_len, fmt_word_len, verif[c]);
 
     // ---------- Reset ----------
     rst_n = 0;
@@ -247,43 +286,45 @@ module tb_verify_bridge;
     start_time = $time;
 
     // ---------- Push FIRST input word to prime FIFO ----------
-    push_input_word(pk_3[c][0*64 +: 64]);  // PK rho word 0
+    push_input_word(pk[c][0*64 +: 64]);  // PK rho word 0
 
     // ---------- Start Verify NOW ----------
-    // mode=1=Verify, sec_lvl=3, start=1: CTRL = (3<<3) | (1<<1) | 1 = 24|2|1 = 0x1B
-    axi_write(64'h00, 64'h1B);
-    $display("  Wrote CTRL=0x1B (mode=Verify=1, sec_lvl=3, start=1) after priming with 1 word");
+    // TUMCREATE: CTRL = (sec_lvl << 3) | (mode=1 << 1) | start=1.
+    // sec_lvl=2 → 0x13; sec_lvl=3 → 0x1B; sec_lvl=5 → 0x2B.
+    axi_write(64'h00, ((`SEC_LVL & 8'h07) << 3) | (8'h01 << 1) | 8'h01);
+    $display("  Wrote CTRL=%02xh (mode=Verify=1, sec_lvl=%0d, start=1) after priming with 1 word",
+             ((`SEC_LVL & 8'h07) << 3) | (8'h01 << 1) | 8'h01, `SEC_LVL);
 
     // ---------- Push remaining input words ----------
     // 1. PK rho words 1..3 (word 0 already pushed)
-    for (i = 1; i < 4; i = i + 1)
-      push_input_word(pk_3[c][i*64 +: 64]);
+    for (i = 1; i < RHO_WORDS; i = i + 1)
+      push_input_word(pk[c][i*64 +: 64]);
 
-    // 2. c_tilde (6 words) from sig[0..5]
-    for (i = 0; i < 6; i = i + 1)
-      push_input_word(sig_3[c][i*64 +: 64]);
+    // 2. c_tilde from sig[0 +:]
+    for (i = 0; i < CTILDE_WORDS; i = i + 1)
+      push_input_word(sig[c][i*64 +: 64]);
 
-    // 3. z (400 words) from sig[CTILDE_WIDTH +:]
-    for (i = 0; i < 400; i = i + 1)
-      push_input_word(sig_3[c][`CTILDE_WIDTH_3 + i*64 +: 64]);
+    // 3. z from sig[CTILDE_WIDTH_L +:]
+    for (i = 0; i < z_WORDS; i = i + 1)
+      push_input_word(sig[c][CTILDE_W + i*64 +: 64]);
 
-    // 4. PK t1 (240 words) from pk[SKPK_RHO_WIDTH +:]
-    for (i = 0; i < 240; i = i + 1)
-      push_input_word(pk_3[c][`SKPK_RHO_WIDTH + i*64 +: 64]);
+    // 4. PK t1 from pk[SKPK_RHO_WIDTH +:]
+    for (i = 0; i < T1_WORDS; i = i + 1)
+      push_input_word(pk[c][`SKPK_RHO_WIDTH + i*64 +: 64]);
 
     // 5. mlen + ctxlen combined (1 word)
-    mlen_ctxlen_word = {48'd0, mlen_3[c] + ctxlen_3[c]};
+    mlen_ctxlen_word = {48'd0, mlen[c] + ctxlen[c]};
     push_input_word(mlen_ctxlen_word);
 
     // 6. message_fmtd
     for (i = 0; i < fmt_word_len; i = i + 1)
-      push_input_word(message_fmtd_3[c][i*64 +: 64]);
+      push_input_word(message_fmtd[c][i*64 +: 64]);
 
-    // 7. h (8 words) from sig[CTILDE_WIDTH + z_WIDTH +:]
-    for (i = 0; i < 8; i = i + 1)
-      push_input_word(sig_3[c][`CTILDE_WIDTH_3 + `z_WIDTH_3 + i*64 +: 64]);
+    // 7. h from sig[CTILDE_WIDTH_L + z_WIDTH_L +:]
+    for (i = 0; i < h_WORDS; i = i + 1)
+      push_input_word(sig[c][CTILDE_W + z_WIDTH_L + i*64 +: 64]);
 
-    total_input_words = 4 + 6 + 400 + 240 + 1 + fmt_word_len + 8;
+    total_input_words = RHO_WORDS + CTILDE_WORDS + z_WORDS + T1_WORDS + 1 + fmt_word_len + h_WORDS;
     $display("  Pushed %0d input words total. Draining output...", total_input_words);
 
     // ---------- Drain DATA_OUT — expect exactly 1 word ----------
@@ -310,13 +351,13 @@ module tb_verify_bridge;
 
     // ---------- Compare ----------
     $display("");
-    if (result_fail === verif_3[c][0]) begin
+    if (result_fail === verif[c][0]) begin
       $display("=== [Bridge Verify] RESULT: PASS (fail=%0d matches expected=%0d), cycles=%0d ===",
-               result_fail, verif_3[c][0], total_cycles);
+               result_fail, verif[c][0], total_cycles);
       $display("testbench done - PASS");
     end else begin
       $display("=== [Bridge Verify] RESULT: FAIL (got fail=%0d, expected=%0d), cycles=%0d ===",
-               result_fail, verif_3[c][0], total_cycles);
+               result_fail, verif[c][0], total_cycles);
       $display("testbench done - FAIL");
     end
 

@@ -30,7 +30,16 @@
 
 set -u
 
+# TUMCREATE: NUM_TV is arg 1, SEC_LVL is arg 2 (default 3 for backward compat).
+# Valid SEC_LVL: 2 (ML-DSA-44), 3 (ML-DSA-65), 5 (ML-DSA-87).
 NUM_TV="${1:-1}"
+SEC_LVL="${2:-3}"
+case "$SEC_LVL" in
+  2) KAT_SUF="44" ;;
+  3) KAT_SUF="65" ;;
+  5) KAT_SUF="87" ;;
+  *) echo "Invalid sec_lvl=$SEC_LVL (must be 2|3|5)"; exit 2 ;;
+esac
 HERE="$(cd "$(dirname "$0")" && pwd)"
 PHASE_DIR="$(dirname "$HERE")"
 PHASE="$(basename "$PHASE_DIR")"          # sign
@@ -56,10 +65,17 @@ rm -rf xsim.dir xvhdl.log xvlog.log webtalk* 2>/dev/null
 # -----------------------------------------------------------------------------
 # Step 1: Generate phase-specific testbench
 # -----------------------------------------------------------------------------
+# TUMCREATE: Upstream testbenches iterate sec_lvl 2 -> 3 -> 5 -> 2 (loop).
+# We patch the testbench to:
+#   - Start at the requested SEC_LVL (instead of 2)
+#   - $finish after one iteration (instead of looping to the next level)
+#   - Set NUM_TV to the requested count
 cp "$SRC_TB/${TB_NAME}.v" "$TB_FILE"
-sed -i "s/sec_lvl = 2;/sec_lvl = 3;/" "$TB_FILE"
-sed -i "s/sec_lvl = 4;/sec_lvl = 3;/" "$TB_FILE"
-sed -i "s/sec_lvl = 5;/sec_lvl = 3;/" "$TB_FILE"
+sed -i "s/sec_lvl = 2;/sec_lvl = ${SEC_LVL};/" "$TB_FILE"
+sed -i "s/sec_lvl = 4;/sec_lvl = ${SEC_LVL};/" "$TB_FILE"
+sed -i "s/sec_lvl = 5;/sec_lvl = ${SEC_LVL};/" "$TB_FILE"
+sed -i 's|sec_lvl <= 3;|$display("ML-DSA testbench done"); $finish;|' "$TB_FILE"
+sed -i 's|sec_lvl <= 5;|$display("ML-DSA testbench done"); $finish;|' "$TB_FILE"
 sed -i -E "s/(localparam\s+NUM_TV\s*=\s*)[0-9]+/\1${NUM_TV}/" "$TB_FILE"
 # Bound every $readmemh to vector 0 (documents intent). XSIM still warns;
 # the tail/grep filter below strips the warning from displayed output.
@@ -71,7 +87,7 @@ for f in "$KAT_DIR"/*.txt; do
 done
 
 echo "==================================================================="
-echo " ML-DSA Sign STANDALONE sim (sec_lvl=3, KAT vectors=${NUM_TV})"
+echo " ML-DSA Sign STANDALONE sim (sec_lvl=${SEC_LVL} / ML-DSA-${KAT_SUF}, KAT vectors=${NUM_TV})"
 echo "==================================================================="
 echo "[1/5] Compile mldsa_params.v..." | tee "$LOG"
 $XVLOG --relax "$COMMON/mldsa_params.v" 2>&1 \

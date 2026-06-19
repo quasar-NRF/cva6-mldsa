@@ -31,7 +31,16 @@
 
 set -u
 
+# TUMCREATE: NUM_TV is arg 1, SEC_LVL is arg 2 (default 3 for backward compat).
+# Valid SEC_LVL: 2 (ML-DSA-44), 3 (ML-DSA-65), 5 (ML-DSA-87).
 NUM_TV="${1:-1}"
+SEC_LVL="${2:-3}"
+case "$SEC_LVL" in
+  2) KAT_SUF="44" ;;
+  3) KAT_SUF="65" ;;
+  5) KAT_SUF="87" ;;
+  *) echo "Invalid sec_lvl=$SEC_LVL (must be 2|3|5)"; exit 2 ;;
+esac
 HERE="$(cd "$(dirname "$0")" && pwd)"
 PHASE_DIR="$(dirname "$HERE")"
 PHASE="$(basename "$PHASE_DIR")"          # verify
@@ -55,18 +64,20 @@ cd "$HERE"
 rm -rf xsim.dir xvhdl.log xvlog.log webtalk* 2>/dev/null
 
 # -----------------------------------------------------------------------------
-# Step 1: Generate phase-specific testbench with sec_lvl=3 patches
+# Step 1: Generate phase-specific testbench with sec_lvl patches
 # -----------------------------------------------------------------------------
-# Verify TB special handling: upstream iterates sec_lvl 2→3→5→2 (loop). After
-# sec_lvl=3 KAT completes, replace the `sec_lvl <= 5` transition with $finish
-# so we test only sec_lvl=3. Also emit "ML-DSA.Verify testbench done" so the
-# pass-detector finds it.
+# TUMCREATE: Upstream iterates sec_lvl 2→3→5→2 (loop). Patch to:
+#   - Start at the requested SEC_LVL
+#   - $finish after one iteration (emit "ML-DSA.Verify testbench done" so the
+#     pass-detector grep finds it)
+#   - Set NUM_TV to the requested count
 cp "$SRC_TB/${TB_NAME}.v" "$TB_FILE"
-sed -i "s/sec_lvl = 2;/sec_lvl = 3;/" "$TB_FILE"
-sed -i "s/sec_lvl = 4;/sec_lvl = 3;/" "$TB_FILE"
-sed -i "s/sec_lvl = 5;/sec_lvl = 3;/" "$TB_FILE"
+sed -i "s/sec_lvl = 2;/sec_lvl = ${SEC_LVL};/" "$TB_FILE"
+sed -i "s/sec_lvl = 4;/sec_lvl = ${SEC_LVL};/" "$TB_FILE"
+sed -i "s/sec_lvl = 5;/sec_lvl = ${SEC_LVL};/" "$TB_FILE"
+sed -i 's|sec_lvl <= 3;|$display("ML-DSA.Verify testbench done"); $finish;|' "$TB_FILE"
+sed -i 's|sec_lvl <= 5;|$display("ML-DSA.Verify testbench done"); $finish;|' "$TB_FILE"
 sed -i -E "s/(localparam\s+NUM_TV\s*=\s*)[0-9]+/\1${NUM_TV}/" "$TB_FILE"
-sed -i 's/sec_lvl <= 5;/\$display("ML-DSA.Verify testbench done"); \$finish;/' "$TB_FILE"
 # Bound every $readmemh to vector 0 (documents intent). XSIM still warns;
 # the tail/grep filter below strips the warning from displayed output.
 sed -i -E 's/\$readmemh\(("[^"]+"),\s*([A-Za-z_][A-Za-z0-9_]*)\)/\$readmemh(\1, \2, 0, 0)/g' "$TB_FILE"
@@ -77,7 +88,7 @@ for f in "$KAT_DIR"/*.txt; do
 done
 
 echo "==================================================================="
-echo " ML-DSA Verify STANDALONE sim (sec_lvl=3, KAT vectors=${NUM_TV})"
+echo " ML-DSA Verify STANDALONE sim (sec_lvl=${SEC_LVL} / ML-DSA-${KAT_SUF}, KAT vectors=${NUM_TV})"
 echo "==================================================================="
 echo "[1/5] Compile mldsa_params.v..." | tee "$LOG"
 $XVLOG --relax "$COMMON/mldsa_params.v" 2>&1 \

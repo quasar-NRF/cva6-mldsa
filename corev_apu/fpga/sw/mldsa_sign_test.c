@@ -23,18 +23,38 @@
 #define MLDSA_STATUS  0x18
 #define MLDSA_DIAG    0x20
 
+// TUMCREATE (2026-06-18): allow compile-time override via -DSEC_LVL=X for multi-level testing
+#ifndef SEC_LVL
 #define SEC_LVL   3
+#endif
 
-/* Signing input sizes */
+/* Signing input sizes — TUMCREATE (2026-06-18): parameterized by SEC_LVL */
 #define RHO_WORDS     4
 #define TR_WORDS      8
-#define S1_WORDS      80
-#define S2_WORDS      96
-#define T0_WORDS      312
 #define K_WORDS       4
-#define Z_WORDS       400
-#define H_WORDS       8
-#define CTILDE_WORDS  6
+/* SK and SIG sizes vary per security level (FIPS 204 parameter sets) */
+#if   SEC_LVL == 2
+#  define S1_WORDS      48     // SK_s1_BYTES_2/8 = 384/8
+#  define S2_WORDS      48     // SK_s2_BYTES_2/8 = 384/8
+#  define T0_WORDS      208    // SK_t0_BYTES_2/8 = 1664/8
+#  define Z_WORDS       288    // z_BYTES_2/8 = 2304/8
+#  define H_WORDS       11     // ceil(h_BYTES_2/8) = ceil(84/8)
+#  define CTILDE_WORDS  4      // CTILDE_BYTES_2/8 = 32/8
+#elif SEC_LVL == 5
+#  define S1_WORDS      84     // SK_s1_BYTES_5/8 = 672/8
+#  define S2_WORDS      96     // SK_s2_BYTES_5/8 = 768/8
+#  define T0_WORDS      416    // SK_t0_BYTES_5/8 = 3328/8
+#  define Z_WORDS       560    // z_BYTES_5/8 = 4480/8
+#  define H_WORDS       11     // ceil(h_BYTES_5/8) = ceil(83/8)
+#  define CTILDE_WORDS  8      // CTILDE_BYTES_5/8 = 64/8
+#else  /* sec_lvl=3 default */
+#  define S1_WORDS      80
+#  define S2_WORDS      96
+#  define T0_WORDS      312
+#  define Z_WORDS       400
+#  define H_WORDS       8
+#  define CTILDE_WORDS  6
+#endif
 
 static inline void write_reg(uint64_t offset, uint64_t value) {
     *(volatile uint64_t *)(MLDSA_BASE + offset) = value;
@@ -66,12 +86,12 @@ static volatile uint64_t result = 0xDEAD;
 
 int main(void) {
     /* Dummy key material (all zeros) */
-    uint64_t rho[4] = {0};
-    uint64_t K[4] = {0};
-    uint64_t s1[80] = {0};
-    uint64_t s2[96] = {0};
-    uint64_t t0[312] = {0};
-    uint64_t tr[8] = {0};
+    uint64_t rho[RHO_WORDS] = {0};
+    uint64_t K[K_WORDS] = {0};
+    uint64_t s1[S1_WORDS] = {0};
+    uint64_t s2[S2_WORDS] = {0};
+    uint64_t t0[T0_WORDS] = {0};
+    uint64_t tr[TR_WORDS] = {0};
     uint64_t rnd[4] = {0};
     uint64_t mlen_word = 5;  /* message length */
     uint64_t fmtd[1] = {0x0000000000000048ull}; /* "H\0\0\0\0\0\0\0" */

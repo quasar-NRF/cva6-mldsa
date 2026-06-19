@@ -33,6 +33,22 @@ This is the bug companion to `MLDSA_FPGA_TIMING_REPORT.md` (FPGA utilization & t
 
 ---
 
+## Upstream bugs (1–5) at a glance — class, plain-English, and why the original testbench missed each
+
+Locations point into the **patched local submodule** (`corev_apu/fpga/src/ML-DSA-OSH/ref_combined/src/…`), where every original bug-site is now marked with a `// fix` comment — so the quoted line is the fix itself or the comment describing the upstream defect. Descriptions are one phrase each.
+
+| # | Location (quoted line) | Class | Technical — 1 phrase | In plain words — 1 phrase | Why the original TB missed it |
+|---|------------------------|-------|----------------------|---------------------------|-------------------------------|
+| 1 | [combined_top.v:1047](corev_apu/fpga/src/ML-DSA-OSH/ref_combined/src/combined_top.v#L1047) `… ? KG_MULT_AS1 : KG_SAMPLE_S2` + [:1055](corev_apu/fpga/src/ML-DSA-OSH/ref_combined/src/combined_top.v#L1055) `naddr1_sel_op[0]=(nstate0==KG_MULT_AS1)?4'd0` | Race / FSM transition hazard | Transition can fire while `done_op[0]=0`, leaving `addr1=K-1` so MULT reads the wrong s1 slot → wrong T. | KeyGen jumps to the next step pointing at the last memory page, silently yielding a wrong key. | The race only triggers under one specific simulator/tool-version scheduling their flow never produced. |
+| 2 | [combined_top.v:1890](corev_apu/fpga/src/ML-DSA-OSH/ref_combined/src/combined_top.v#L1890) *"ctr_dec==K\*64-1 … impossible for S1"* + [:1897](corev_apu/fpga/src/ML-DSA-OSH/ref_combined/src/combined_top.v#L1897) `… ? FSM0_NTT_S2 : FSM0_NTT_S1` | Deadlock (unreachable exit cond.) | FSM0_NTT_S1/S2 waits for `ctr_dec==K*64-1`, which S1's `L*64` outputs can never reach → Sign hangs. | Sign waits for a counter value that cannot exist, freezing forever. | At sec_lvl=2 (K==L==4) the counter *can* reach the target, masking the hang if they ran level 2. |
+| 3 | [combined_top.v:1740](corev_apu/fpga/src/ML-DSA-OSH/ref_combined/src/combined_top.v#L1740) `data_o=(ctr==6&&sec_lvl==3)?{63'd0,fail}:0` | Spec non-conformance (output format) | VY_COMPARE emits a 7-word diagnostic vector instead of the spec's single fail-bit word. | Verify dumps debug words where one pass/fail bit should be, flipping accept/reject. | Their TB read the fail bit from the word their own non-spec code used, so TB and DUT agreed (self-referential). |
+| 4 | [decoder.v:183](corev_apu/fpga/src/ML-DSA-OSH/ref_combined/src/decoder.v#L183) `valid_o=(… && !dec_stall)?1:0` + [:230](corev_apu/fpga/src/ML-DSA-OSH/ref_combined/src/decoder.v#L230) `SIPO_IN<=SIPO_IN` | Backpressure / pipeline hazard | T0 decoder shift-register advances on empty cycles (shift-without-load), dragging stale bits into t0. | When data pauses one cycle, the conveyor belt drags in junk and scrambles the signature. | Their TB holds `valid_i` high every cycle, so the FIFO never empties and the bug never fires. |
+| 5 | [operation_module.v:238](corev_apu/fpga/src/ML-DSA-OSH/ref_combined/src/operation_module.v#L238) `running<=0; // reverted from <= start` | State leak across op boundary | `running<=start` keeps the busy flag asserted across operations, restarting the FSM on the next phase. | A "busy" flag never clears between phases, so the second phase crashes. | Their TBs run one phase per reset, so the cross-phase flag bleed never occurs. |
+
+The five classes are distinct: a *race* (1), a *deadlock from an unreachable exit condition* (2), a *spec-format violation* (3), a *backpressure/pipeline hazard* (4), and a *state leak across operation boundaries* (5) — each invisible to the upstream self-tests for a different, concrete reason (last column).
+
+---
+
 ## How the bugs are grouped
 
 The fixes are layered. Before reading the details, it helps to know which bucket each bug is in:
@@ -45,7 +61,7 @@ The fixes are layered. Before reading the details, it helps to know which bucket
 
 ## Real upstream-design bugs (worth reporting to KU Leuven COSIC)
 
-These are genuine defects in the ML-DSA-OSH RTL. Each is given twice below: first the **technical** statement (what's wrong, where, and the fix), then an **in plain words** explanation for readers who aren't deep in the RTL.
+These are genuine defects in the ML-DSA-OSH RTL. Each entry has three parts: the **technical** statement (what's wrong, where, and the fix), an **in plain words** explanation for readers who aren't deep in the RTL, and a **why the upstream testbench missed it** note — the practical reason KU Leuven COSIC's own self-tests stayed green, which is exactly what to cite when filing the report.
 
 ### Bug 1 — KeyGen reads the wrong polynomial slot (silent bad keys)
 
@@ -56,6 +72,8 @@ The transition condition could fire on cycles where `done_op[0]=0` (still waitin
 **In plain words.** Key generation builds a key by reading polynomials out of a small block of memory, one after another, like reading pages 1, 2, 3, 4, 5 from a book. There's a clock-like counter that says "which page am I on." The bug: the state machine sometimes jumps to the next step a beat too early, while the counter is still parked on the *last* page (page 5). So instead of starting the next step at page 1, it starts at page 5 and reads the wrong data. The key it produces looks perfectly normal but is silently wrong — signatures made with it will never verify. This is the most dangerous kind of bug: it gives no error, just a broken result.
 
 **Impact:** CVA6 KeyGen emits keys that don't validate. **Severity: High.**
+
+**Why the upstream testbench missed it:** This is a *race*. The bad transition fires only for one specific ordering of how the simulator evaluates the FSM versus `done_op`/`ctr` in the same clock — and whether that ordering occurs depends on the simulator and tool version. If their flow never produces it, the buggy branch never runs and every KeyGen KAT comparison passes. Races are non-deterministic; *any single tool flow can be blind to them.* (Would surface under a regression run on ≥2 different simulators/versions.)
 
 ---
 
@@ -69,6 +87,8 @@ Prior code required `s1_ntt_all_done && ctr_dec == K*64-1` to advance. But S1 on
 
 **Impact:** Sign hangs the accelerator → bridge FIFO drains and never refills → CVA6 sees `ready=0` forever. **Severity: High.**
 
+**Why the upstream testbench missed it:** The unreachable counter only bites when **L < K** — i.e. ML-DSA-65 (level 3) and ML-DSA-87 (level 5). At **ML-DSA-44 (level 2), K == L == 4**, so the counter *can* reach its target and Sign completes normally. If their default testbench ran level 2 (the smallest, fastest config — a common default), the hang is invisible. (Would surface in a sweep across all three security levels.)
+
 ---
 
 ### Bug 3 — Verify returns the wrong output format (pass/fail flipped)
@@ -80,6 +100,8 @@ Previous code emitted 7 diagnostic words (TR, MU, hash, c, fail, rho, ntt_z_ctr0
 **In plain words.** Verify is supposed to answer one simple question with one simple word: "is this signature valid?" — a single yes/no bit (technically a "fail" bit). The old code instead spat out seven words of internal debug info. Now, any normal program reads the result at the slot where the yes/no answer is supposed to be, but finds a completely different piece of data sitting there. So it misreads the answer: a genuine signature gets reported as a forgery, and a forged one gets reported as genuine. The verification still "runs" and prints a result — it's just the wrong result. For a security feature, silently flipping accept/reject is about as bad as it gets.
 
 **Impact:** CVA6 verify silently passes/fails wrong. **Severity: High.**
+
+**Why the upstream testbench missed it:** *Self-referential checking.* Their verify testbench was written to read the fail bit from whichever word position their own (non-spec) code placed it — so TB and DUT agreed with each other and the KAT comparison passed, even though both violated the FIPS 204 one-word contract. Any spec-following *external* consumer reads the wrong slot. (Would surface if the TB expectations were checked against the FIPS 204 output contract rather than the DUT's actual output.)
 
 ---
 
@@ -93,6 +115,8 @@ When the upstream FIFO has transient empty cycles (which the bridge's FIFO does,
 
 **Impact:** Signatures produced through the bridge fail verification. **Severity: High** (and the trigger — upstream FIFO stutters — is common in any real system, so this one will hit other integrators too).
 
+**Why the upstream testbench missed it:** *Ideal interfaces.* Their streaming testbench holds `valid_i` high every cycle — a perfect producer that never stalls — so the upstream FIFO never has an empty cycle and the corrupting `shift-without-load` path is never exercised. Real AXI buses physically can't hold `valid` high continuously (arbitration, single-beat transactions, and FIFO priming all insert gaps). (Would surface under a TB with randomized `valid`/`ready` strobing and random stall cycles.)
+
 ---
 
 ### Bug 5 — "Busy" flag not cleared between phases (2nd phase crashes)
@@ -104,6 +128,8 @@ A prior patch had `running <= start`. This kept `running` asserted across operat
 **In plain words.** There's a "busy" flag the accelerator raises while working and is supposed to lower when it finishes. The bug kept that flag stuck *up* even after the work was done — it never got lowered between one operation and the next. So when software kicked off the second operation (e.g. Sign right after KeyGen), the accelerator saw the still-raised flag, got confused about its own state, and restarted from the beginning. Any multi-step sequence — which the full KeyGen→Sign→Verify chain is — blew up on the second step.
 
 **Impact:** Multi-phase (end-to-end) sequences fail on the second phase. **Severity: Medium** (single-phase runs are fine; this only bites chained runs).
+
+**Why the upstream testbench missed it:** *Single-phase coverage.* Their module-level testbenches reset the core, run one operation, check, and end the sim — so the `running` flag bleeding across a phase boundary never matters; each run starts clean. The bug only appears when phases are chained in one run with no reset between them (an end-to-end sequence), which the suite doesn't exercise. (Would surface in a chained end-to-end test with no reset between phases.)
 
 ---
 

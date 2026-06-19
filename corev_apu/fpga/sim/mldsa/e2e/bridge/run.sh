@@ -36,6 +36,14 @@
 
 set -u
 
+# TUMCREATE: SEC_LVL is arg 1 (default 3). Valid: 2 (ML-DSA-44), 3 (ML-DSA-65), 5 (ML-DSA-87).
+SEC_LVL="${1:-3}"
+case "$SEC_LVL" in
+  2) KAT_SUF="44" ;;
+  3) KAT_SUF="65" ;;
+  5) KAT_SUF="87" ;;
+  *) echo "Invalid sec_lvl=$SEC_LVL (must be 2|3|5)"; exit 2 ;;
+esac
 HERE="$(cd "$(dirname "$0")" && pwd)"
 PHASE_DIR="$(dirname "$HERE")"
 PHASE="$(basename "$PHASE_DIR")"          # e2e
@@ -69,7 +77,7 @@ for f in "$KAT_DIR"/*.txt; do
 done
 
 echo "==================================================================="
-echo " ML-DSA End-to-End BRIDGE sim (sec_lvl=3, KeyGen→Sign→Verify)"
+echo " ML-DSA End-to-End BRIDGE sim (sec_lvl=${SEC_LVL} / ML-DSA-${KAT_SUF}, KeyGen→Sign→Verify)"
 echo "==================================================================="
 
 echo "[1/7] Compile mldsa_params.v..." | tee "$LOG"
@@ -149,7 +157,14 @@ fi
 echo "  pulp axi_lite OK" | tee -a "$LOG"
 
 echo "[6/7] Compile bridge + testbench..." | tee -a "$LOG"
-R=$($XVLOG --sv --relax -d XSIM -d VERILATOR -i "$PULP_AXI_INC" -i "$PULP_COMMON_INC" \
+# TUMCREATE: pass -d SEC_LVL so the bridge TB can use \`SEC_LVL for CTRL value, KAT suffix, etc.
+# TUMCREATE: BRG_DEBUG=1 env var enables bridge FIFO visibility (push/drop/pop logging).
+BRG_DBG_FLAGS=""
+if [ "${BRG_DEBUG:-0}" = "1" ]; then
+    BRG_DBG_FLAGS="-d BRG_DEBUG"
+    echo "  BRG_DEBUG=1 enabled (bridge FIFO visibility)" | tee -a "$LOG"
+fi
+R=$($XVLOG --sv --relax -d XSIM -d VERILATOR -d SEC_LVL=${SEC_LVL} $BRG_DBG_FLAGS -i "$PULP_AXI_INC" -i "$PULP_COMMON_INC" \
     -i "$COMMON" -i "$SRC" \
     "$BRIDGE_DIR/axi_mldsa_bridge.sv" "$TB_FILE" 2>&1 \
     | grep -v "XSIM 43-3431" | grep -iE "ERROR[:[]" | head -10)
@@ -159,7 +174,7 @@ fi
 echo "  Bridge/TB OK" | tee -a "$LOG"
 
 echo "[7/7] Elaborate + run sim (15min timeout)..." | tee -a "$LOG"
-$XELAB --relax -d XSIM -d VERILATOR "work.${TB_NAME}" -snapshot "sim_bridge_${PHASE}" 2>&1 \
+$XELAB --relax -d XSIM -d VERILATOR -d SEC_LVL=${SEC_LVL} $BRG_DBG_FLAGS "work.${TB_NAME}" -snapshot "sim_bridge_${PHASE}" 2>&1 \
     | grep -v "XSIM 43-3431" | grep -iE "ERROR[:[]" | head -10 | tee -a "$LOG"
 
 timeout 900 $XSIM "sim_bridge_${PHASE}" -R > "$SIM_RUN_LOG" 2>&1

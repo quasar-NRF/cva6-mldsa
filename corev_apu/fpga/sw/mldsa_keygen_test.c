@@ -22,8 +22,18 @@
 #define MLDSA_STATUS  0x18
 #define MLDSA_DIAG    0x20
 
+// TUMCREATE (2026-06-18): allow compile-time override via -DSEC_LVL=X for multi-level testing
+#ifndef SEC_LVL
 #define SEC_LVL   3
-#define KG_WORDS  744
+#endif
+// KG_WORDS = ceil(SK_BYTES/8) where SK_BYTES varies per level
+#if   SEC_LVL == 2
+#  define KG_WORDS  480
+#elif SEC_LVL == 5
+#  define KG_WORDS  932
+#else
+#  define KG_WORDS  744   // sec_lvl=3 default
+#endif
 
 static inline void write_reg(uint64_t offset, uint64_t value) {
     *(volatile uint64_t *)(MLDSA_BASE + offset) = value;

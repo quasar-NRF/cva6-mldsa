@@ -36,6 +36,17 @@
 
 set -u
 
+# TUMCREATE: NUM_TV is arg 1 (ignored for e2e — always uses vector 0),
+# SEC_LVL is arg 2 (default 3 for backward compat).
+# Valid SEC_LVL: 2 (ML-DSA-44), 3 (ML-DSA-65), 5 (ML-DSA-87).
+NUM_TV="${1:-1}"
+SEC_LVL="${2:-3}"
+case "$SEC_LVL" in
+  2) KAT_SUF="44" ;;
+  3) KAT_SUF="65" ;;
+  5) KAT_SUF="87" ;;
+  *) echo "Invalid sec_lvl=$SEC_LVL (must be 2|3|5)"; exit 2 ;;
+esac
 HERE="$(cd "$(dirname "$0")" && pwd)"
 PHASE_DIR="$(dirname "$HERE")"
 PHASE="$(basename "$PHASE_DIR")"          # e2e
@@ -57,13 +68,21 @@ SIM_RUN_LOG="${HERE}/xsim_output.log"
 cd "$HERE"
 rm -rf xsim.dir xvhdl.log xvlog.log webtalk* 2>/dev/null
 
+# TUMCREATE: patch tb_e2e_standalone.v to use the requested SEC_LVL.
+# - Replace sec_lvl = 3'd3 with 3'd${SEC_LVL}
+# - Replace all _65.txt references with _${KAT_SUF}.txt
+cp "${HERE}/${TB_NAME}.v" "${TB_FILE}.patched"
+sed -i "s/sec_lvl = 3'd3;/sec_lvl = 3'd${SEC_LVL};/" "${TB_FILE}.patched"
+sed -i "s/_65\\.txt/_${KAT_SUF}.txt/g" "${TB_FILE}.patched"
+TB_FILE="${TB_FILE}.patched"
+
 ln -sf "${COMMON}/zetas.txt" zetas.txt
 for f in "$KAT_DIR"/*.txt; do
   ln -sf "$f" "$(basename $f)"
 done
 
 echo "==================================================================="
-echo " ML-DSA End-to-End STANDALONE sim (sec_lvl=3, KeyGen→Sign→Verify)"
+echo " ML-DSA End-to-End STANDALONE sim (sec_lvl=${SEC_LVL} / ML-DSA-${KAT_SUF}, KeyGen→Sign→Verify)"
 echo "==================================================================="
 echo "[1/5] Compile mldsa_params.v..." | tee "$LOG"
 $XVLOG --relax "$COMMON/mldsa_params.v" 2>&1 \

@@ -18,6 +18,7 @@
 #   --wait  : seconds to wait for test completion (default: 60)
 #   --vars  : comma-separated result variables to read (default: phase,kg_result,sign_result,sign_out_cnt,verify_result)
 #   --no-program : skip FPGA reprogramming (use if already clean)
+#   --sec-lvl N  : compile with -DSEC_LVL=N (2|3|5). Default: 3 (no override).
 set -euo pipefail
 
 GDB="/opt/Xilinx/2025.2/gnu/riscv/lin/bin/riscv64-unknown-elf-gdb"
@@ -30,6 +31,7 @@ PROGRAM_TCL="$SCRIPT_DIR/program_fpga.tcl"
 WAIT_SECONDS=60
 RESULT_VARS="phase,kg_result,sign_result,sign_out_cnt,verify_result"
 NO_PROGRAM=0
+SEC_LVL=""
 
 # Parse args
 INPUT=""
@@ -38,19 +40,32 @@ while [ $# -gt 0 ]; do
         --wait)        WAIT_SECONDS="$2"; shift 2 ;;
         --vars)        RESULT_VARS="$2"; shift 2 ;;
         --no-program)  NO_PROGRAM=1; shift ;;
+        --sec-lvl)     SEC_LVL="$2"; shift 2 ;;
         -*)            echo "Unknown option: $1" >&2; exit 1 ;;
         *)             INPUT="$1"; shift ;;
     esac
 done
 
-[ -z "$INPUT" ] && { echo "Usage: $0 <source.c|file.elf> [--wait N] [--vars v1,v2,...] [--no-program]" >&2; exit 1; }
+[ -z "$INPUT" ] && { echo "Usage: $0 <source.c|file.elf> [--wait N] [--vars v1,v2,...] [--no-program] [--sec-lvl 2|3|5]" >&2; exit 1; }
 [ ! -f "$INPUT" ] && { echo "File not found: $INPUT" >&2; exit 1; }
+
+# Validate --sec-lvl
+if [ -n "$SEC_LVL" ]; then
+    case "$SEC_LVL" in
+        2|3|5) ;;
+        *) echo "Invalid --sec-lvl: $SEC_LVL (must be 2, 3, or 5)" >&2; exit 1 ;;
+    esac
+fi
 
 # Step 1: Compile if .c
 if [[ "$INPUT" == *.c ]]; then
     ELF="${INPUT%.c}.elf"
     echo "[1/5] Compiling $(basename "$INPUT")..."
-    "$SCRIPT_DIR/RISCV_compile.sh" "$INPUT" "$ELF" || { echo "Compilation failed"; exit 1; }
+    if [ -n "$SEC_LVL" ]; then
+        EXTRA_CFLAGS="-DSEC_LVL=$SEC_LVL" "$SCRIPT_DIR/RISCV_compile.sh" "$INPUT" "$ELF" || { echo "Compilation failed"; exit 1; }
+    else
+        "$SCRIPT_DIR/RISCV_compile.sh" "$INPUT" "$ELF" || { echo "Compilation failed"; exit 1; }
+    fi
 else
     ELF="$INPUT"
 fi

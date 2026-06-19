@@ -1,7 +1,7 @@
 // ==================================================
 // Giulio Golinelli - golinelli.giulio13@gmail.com
 // TUMCREATE QUASAR RESEARCH ENGINEER
-// Modified: 2026-06-17
+// Modified: 2026-06-18
 // This file contains modifications vs. the upstream
 // CVA6 / ML-DSA-OSH source fork.
 // ==================================================
@@ -18,27 +18,21 @@
 //   0x18 STATUS   [RO]  [0]=in_empty [2]=out_empty [6]=busy
 //   0x20 DIAG     [RO]  accelerator internal state
 //
-// Sign input word sequence (sec_lvl=3, K=6, L=5):
-//   1. SK rho       : 4 words   (32B)
-//   2. mlen+ctxlen  : 1 word
-//   3. SK tr        : 8 words   (64B)
-//   4. message_fmtd : ceil((2 + ctxlen + mlen) / 8) words
-//   5. SK K         : 4 words   (32B)
-//   6. rnd          : 4 words   (32B, zeros)
-//   7. SK s1        : 80 words  (640B)
-//   8. SK s2        : 96 words  (768B)
-//   9. SK t0        : 312 words (2496B)
-//
-// Sign output word sequence (in receive order):
-//   1. z    : 400 words (3200B) — written to sig_out[CTILDE_WIDTH +:]
-//   2. h    : 8 words   (61B, last padded) — written to sig_out[CTILDE_WIDTH + z_WIDTH +:]
-//   3. ctilde : 6 words (48B) — written to sig_out[0 +:]
+// TUMCREATE (M-A3, 2026-06-18): TB now level-aware. KAT arrays sized for sec_lvl=5
+// (largest); level-specific word counts via localparams selected by `SEC_LVL;
+// KAT filenames branched on `SEC_LVL.
 
 `include "mldsa_params.v"
 `include "axi/typedef.svh"
 `include "axi/assign.svh"
 
 `timescale 1ns / 1ps
+
+// TUMCREATE: Compile-time security level. Forwarded via xvlog/xelab -d SEC_LVL=X.
+// Default 3 (ML-DSA-65) for backward compatibility.
+`ifndef SEC_LVL
+  `define SEC_LVL 3
+`endif
 
 module tb_sign_bridge;
 
@@ -99,24 +93,53 @@ module tb_sign_bridge;
     .data_o  (data_o_i_w)
   );
 
-  // ----------------------------- KAT storage (sec_lvl=3 only) -----------------------------
+  // ----------------------------- Level-mapping localparams (TUMCREATE M-A3) -----------------------------
+  localparam integer SK_BYTES_L     = (`SEC_LVL == 2) ? `SK_BYTES_2   : (`SEC_LVL == 3) ? `SK_BYTES_3   : `SK_BYTES_5;
+  localparam integer SK_s1_BYTES_L  = (`SEC_LVL == 2) ? `SK_s1_BYTES_2 : (`SEC_LVL == 3) ? `SK_s1_BYTES_3 : `SK_s1_BYTES_5;
+  localparam integer SK_s2_BYTES_L  = (`SEC_LVL == 2) ? `SK_s2_BYTES_2 : (`SEC_LVL == 3) ? `SK_s2_BYTES_3 : `SK_s2_BYTES_5;
+  localparam integer SK_t0_BYTES_L  = (`SEC_LVL == 2) ? `SK_t0_BYTES_2 : (`SEC_LVL == 3) ? `SK_t0_BYTES_3 : `SK_t0_BYTES_5;
+  localparam integer SIG_BYTES_L    = (`SEC_LVL == 2) ? `SIG_BYTES_2   : (`SEC_LVL == 3) ? `SIG_BYTES_3   : `SIG_BYTES_5;
+  localparam integer CTILDE_BYTES_L = (`SEC_LVL == 2) ? `CTILDE_BYTES_2 : (`SEC_LVL == 3) ? `CTILDE_BYTES_3 : `CTILDE_BYTES_5;
+  localparam integer z_BYTES_L      = (`SEC_LVL == 2) ? `z_BYTES_2     : (`SEC_LVL == 3) ? `z_BYTES_3     : `z_BYTES_5;
+  localparam integer h_BYTES_L      = (`SEC_LVL == 2) ? `h_BYTES_2     : (`SEC_LVL == 3) ? `h_BYTES_3     : `h_BYTES_5;
+
+  // Per-region word counts (each word = 8 bytes)
+  localparam integer RHO_WORDS  = 4;                                // 32 bytes
+  localparam integer K_WORDS    = 4;                                // 32 bytes
+  localparam integer TR_WORDS   = 8;                                // 64 bytes
+  localparam integer RND_WORDS  = 4;                                // 32 bytes
+  localparam integer S1_WORDS   = SK_s1_BYTES_L / 8;
+  localparam integer S2_WORDS   = SK_s2_BYTES_L / 8;
+  localparam integer T0_WORDS   = SK_t0_BYTES_L / 8;
+
+  // Output word counts (z and ctilde are exact in bytes; h padded to word boundary)
+  localparam integer z_WORDS_OUT     = z_BYTES_L / 8;       // 288 / 400 / 560
+  localparam integer h_WORDS_OUT     = (h_BYTES_L + 7) / 8; // 11 / 8 / 11 (with padding)
+  localparam integer CTILDE_WORDS_OUT = CTILDE_BYTES_L / 8; // 4 / 6 / 8
+  localparam integer TOTAL_OUT_WORDS = z_WORDS_OUT + h_WORDS_OUT + CTILDE_WORDS_OUT;
+
+  // ----------------------------- KAT storage (level-specific widths) -----------------------------
+  // TUMCREATE M-A3 (2026-06-18): width MUST match KAT line length exactly.
+  // Earlier attempt used a widest-case container but XSIM $readmemh mis-aligns
+  // when the loaded hex string is shorter than the container width.
+  localparam integer SK_ARR_W  = (`SEC_LVL == 2) ? `SK_WIDTH_2  : (`SEC_LVL == 3) ? `SK_WIDTH_3  : `SK_WIDTH_5;
+  localparam integer SIG_ARR_W = (`SEC_LVL == 2) ? `SIG_WIDTH_2 : (`SEC_LVL == 3) ? `SIG_WIDTH_3 : `SIG_WIDTH_5;
   localparam NUM_TV = 1;
-  localparam MAX_MLEN_3 = 8192*8;
+  localparam MAX_MLEN = 8192*8;
 
   // Raw KAT inputs
-  reg [0 : `SK_WIDTH_3 - 1]      sk_3      [NUM_TV - 1 : 0];
-  reg [0 : MAX_MLEN_3 - 1]       message_3 [NUM_TV - 1 : 0];
-  reg [31:0]                     mlen_3    [NUM_TV - 1 : 0];
-  reg [0 : `CTX_WIDTH - 1]       context_3 [NUM_TV - 1 : 0];
-  reg [31:0]                     ctxlen_3  [NUM_TV - 1 : 0];
-  // Expected output
-  reg [0 : `SIG_WIDTH_3 - 1]     sig_3     [NUM_TV - 1 : 0];
+  reg [0 : SK_ARR_W - 1]       sk      [NUM_TV - 1 : 0];
+  reg [0 : MAX_MLEN - 1]       message [NUM_TV - 1 : 0];
+  reg [31:0]                   mlen    [NUM_TV - 1 : 0];
+  reg [0 : `CTX_WIDTH - 1]     ctx      [NUM_TV - 1 : 0];
+  reg [31:0]                   ctxlen  [NUM_TV - 1 : 0];
+  reg [0 : SIG_ARR_W - 1]      sig     [NUM_TV - 1 : 0];
 
   // Formatted message buffer: [0] || ctxlen || ctx || msg
-  reg [0 : MAX_MLEN_3 + 2*8 + `CTX_WIDTH - 1] message_fmtd_3 [NUM_TV - 1 : 0];
+  reg [0 : MAX_MLEN + 2*8 + `CTX_WIDTH - 1] message_fmtd [NUM_TV - 1 : 0];
 
-  // Captured signature output
-  reg [0 : `SIG_WIDTH_3 - 1]     sig_out;
+  // Captured signature output (level-specific width)
+  reg [0 : SIG_ARR_W - 1]      sig_out;
 
   integer c, i, j;
   integer wr_idx;          // input word index
@@ -221,13 +244,29 @@ module tb_sign_bridge;
     axi.aw_valid = 1'b0; axi.w_valid = 1'b0; axi.b_ready = 1'b0;
     axi.ar_valid = 1'b0; axi.r_ready = 1'b0;
 
-    // Load KAT
-    $readmemh("SigGen_sk_65.txt",         sk_3, 0, 0);
-    $readmemh("SigGen_message_65.txt",    message_3, 0, 0);
-    $readmemh("SigGen_mlen_65.txt",       mlen_3, 0, 0);
-    $readmemh("SigGen_ctx_65.txt",        context_3, 0, 0);
-    $readmemh("SigGen_ctxlen_65.txt",     ctxlen_3, 0, 0);
-    $readmemh("SigGen_signature_65.txt",  sig_3, 0, 0);
+    // Load KAT (TUMCREATE M-A3: branched on `SEC_LVL)
+    if (`SEC_LVL == 2) begin
+      $readmemh("SigGen_sk_44.txt",         sk, 0, 0);
+      $readmemh("SigGen_message_44.txt",    message, 0, 0);
+      $readmemh("SigGen_mlen_44.txt",       mlen, 0, 0);
+      $readmemh("SigGen_ctx_44.txt",        ctx, 0, 0);
+      $readmemh("SigGen_ctxlen_44.txt",     ctxlen, 0, 0);
+      $readmemh("SigGen_signature_44.txt",  sig, 0, 0);
+    end else if (`SEC_LVL == 3) begin
+      $readmemh("SigGen_sk_65.txt",         sk, 0, 0);
+      $readmemh("SigGen_message_65.txt",    message, 0, 0);
+      $readmemh("SigGen_mlen_65.txt",       mlen, 0, 0);
+      $readmemh("SigGen_ctx_65.txt",        ctx, 0, 0);
+      $readmemh("SigGen_ctxlen_65.txt",     ctxlen, 0, 0);
+      $readmemh("SigGen_signature_65.txt",  sig, 0, 0);
+    end else begin
+      $readmemh("SigGen_sk_87.txt",         sk, 0, 0);
+      $readmemh("SigGen_message_87.txt",    message, 0, 0);
+      $readmemh("SigGen_mlen_87.txt",       mlen, 0, 0);
+      $readmemh("SigGen_ctx_87.txt",        ctx, 0, 0);
+      $readmemh("SigGen_ctxlen_87.txt",     ctxlen, 0, 0);
+      $readmemh("SigGen_signature_87.txt",  sig, 0, 0);
+    end
 
     sig_out = 0;
     c = 0;
@@ -235,20 +274,19 @@ module tb_sign_bridge;
     recv_idx = 0;
 
     // ---------- Build message_fmtd ----------
-    // Layout: [0] (1B) || ctxlen (1B) || ctx (ctxlen B) || message (mlen B)
-    message_fmtd_3[c] = 0;
-    message_fmtd_3[c][0 +: 8]  = 8'd0;
-    message_fmtd_3[c][8 +: 8]  = ctxlen_3[c][7:0];
-    for (i = 0; i < ctxlen_3[c]; i = i + 1) begin
-      message_fmtd_3[c][16 + i*8 +: 8] = context_3[c][(255-ctxlen_3[c])*8 + i*8 +: 8];
+    message_fmtd[c] = 0;
+    message_fmtd[c][0 +: 8]  = 8'd0;
+    message_fmtd[c][8 +: 8]  = ctxlen[c][7:0];
+    for (i = 0; i < ctxlen[c]; i = i + 1) begin
+      message_fmtd[c][16 + i*8 +: 8] = ctx[c][(255-ctxlen[c])*8 + i*8 +: 8];
     end
-    for (i = 0; i < mlen_3[c]; i = i + 1) begin
-      message_fmtd_3[c][16 + ctxlen_3[c]*8 + i*8 +: 8] = message_3[c][(MAX_MLEN_3 - mlen_3[c]*8) + i*8 +: 8];
+    for (i = 0; i < mlen[c]; i = i + 1) begin
+      message_fmtd[c][16 + ctxlen[c]*8 + i*8 +: 8] = message[c][(MAX_MLEN - mlen[c]*8) + i*8 +: 8];
     end
-    fmt_byte_len = 2 + ctxlen_3[c] + mlen_3[c];
+    fmt_byte_len = 2 + ctxlen[c] + mlen[c];
     fmt_word_len = (fmt_byte_len + 7) / 8;
-    $display("=== [Bridge Sign] KAT #%0d: mlen=%0d ctxlen=%0d, fmt_bytes=%0d fmt_words=%0d ===",
-             c, mlen_3[c], ctxlen_3[c], fmt_byte_len, fmt_word_len);
+    $display("=== [Bridge Sign] KAT #%0d (sec_lvl=%0d): mlen=%0d ctxlen=%0d, fmt_bytes=%0d fmt_words=%0d ===",
+             c, `SEC_LVL, mlen[c], ctxlen[c], fmt_byte_len, fmt_word_len);
 
     // ---------- Reset ----------
     rst_n = 0;
@@ -258,76 +296,77 @@ module tb_sign_bridge;
 
     start_time = $time;
 
-    // ---------- Push FIRST input word to prime FIFO (bridge requires in_count != 0 at CTRL write) ----------
-    push_input_word(sk_3[c][0*64 +: 64]);  // SK rho word 0
+    // ---------- Push FIRST input word to prime FIFO ----------
+    push_input_word(sk[c][0*64 +: 64]);  // SK rho word 0
 
-    // ---------- Start Sign NOW so accelerator drains FIFO as we fill it ----------
-    // fix: was 0x1B (mode=1=Verify). Sign requires mode=2 in combined_top's
-    // case({mode,cstate0}) — {2'd2,FSM0_*}. mode=2 << 1 = 0x4, so CTRL =
-    // (sec_lvl=3 << 3) | (mode=2 << 1) | start=1 = 24|4|1 = 29 = 0x1D.
-    // With mode=1 the FSM was running VY_* (Verify) states which share state
-    // encodings with FSM0_* — probe showed cstate0=5 (VY_NTT_T1, not NTT_S2).
-    axi_write(64'h00, 64'h1D);
-    $display("  Wrote CTRL=0x1D (mode=Sign=2, sec_lvl=3, start=1) after priming with 1 word");
+    // ---------- Start Sign NOW ----------
+    // TUMCREATE: CTRL = (sec_lvl << 3) | (mode=2 << 1) | start=1.
+    // sec_lvl=2 → 0x15; sec_lvl=3 → 0x1D; sec_lvl=5 → 0x2D.
+    axi_write(64'h00, ((`SEC_LVL & 8'h07) << 3) | (8'h02 << 1) | 8'h01);
+    $display("  Wrote CTRL=%02xh (mode=Sign=2, sec_lvl=%0d, start=1) after priming with 1 word",
+             ((`SEC_LVL & 8'h07) << 3) | (8'h02 << 1) | 8'h01, `SEC_LVL);
 
     // ---------- Push remaining input words ----------
     // 1. SK rho words 1..3 (word 0 already pushed)
-    for (i = 1; i < 4; i = i + 1)
-      push_input_word(sk_3[c][i*64 +: 64]);
+    for (i = 1; i < RHO_WORDS; i = i + 1)
+      push_input_word(sk[c][i*64 +: 64]);
 
     // 2. mlen + ctxlen combined (1 word)
-    mlen_ctxlen_word = {48'd0, mlen_3[c] + ctxlen_3[c]};
+    mlen_ctxlen_word = {48'd0, mlen[c] + ctxlen[c]};
     push_input_word(mlen_ctxlen_word);
 
     // 3. SK tr (8 words)
-    for (i = 0; i < 8; i = i + 1)
-      push_input_word(sk_3[c][`SKPK_RHO_WIDTH + `SK_K_WIDTH + i*64 +: 64]);
+    for (i = 0; i < TR_WORDS; i = i + 1)
+      push_input_word(sk[c][`SKPK_RHO_WIDTH + `SK_K_WIDTH + i*64 +: 64]);
 
     // 4. message_fmtd
     for (i = 0; i < fmt_word_len; i = i + 1)
-      push_input_word(message_fmtd_3[c][i*64 +: 64]);
+      push_input_word(message_fmtd[c][i*64 +: 64]);
 
     // 5. SK K (4 words)
-    for (i = 0; i < 4; i = i + 1)
-      push_input_word(sk_3[c][`SKPK_RHO_WIDTH + i*64 +: 64]);
+    for (i = 0; i < K_WORDS; i = i + 1)
+      push_input_word(sk[c][`SKPK_RHO_WIDTH + i*64 +: 64]);
 
     // 6. rnd (4 words, all zeros)
-    for (i = 0; i < 4; i = i + 1)
+    for (i = 0; i < RND_WORDS; i = i + 1)
       push_input_word(64'd0);
 
-    // 7. SK s1 (80 words)
-    for (i = 0; i < 80; i = i + 1)
-      push_input_word(sk_3[c][`SKPK_RHO_WIDTH + `SK_K_WIDTH + `SK_tr_WIDTH + i*64 +: 64]);
+    // 7. SK s1
+    for (i = 0; i < S1_WORDS; i = i + 1)
+      push_input_word(sk[c][`SKPK_RHO_WIDTH + `SK_K_WIDTH + `SK_tr_WIDTH + i*64 +: 64]);
 
-    // 8. SK s2 (96 words)
-    for (i = 0; i < 96; i = i + 1)
-      push_input_word(sk_3[c][`SKPK_RHO_WIDTH + `SK_K_WIDTH + `SK_tr_WIDTH + `SK_s1_WIDTH_3 + i*64 +: 64]);
+    // 8. SK s2
+    for (i = 0; i < S2_WORDS; i = i + 1)
+      push_input_word(sk[c][`SKPK_RHO_WIDTH + `SK_K_WIDTH + `SK_tr_WIDTH + SK_s1_BYTES_L*8 + i*64 +: 64]);
 
-    // 9. SK t0 (312 words)
-    for (i = 0; i < 312; i = i + 1)
-      push_input_word(sk_3[c][`SKPK_RHO_WIDTH + `SK_K_WIDTH + `SK_tr_WIDTH + `SK_s1_WIDTH_3 + `SK_s2_WIDTH_3 + i*64 +: 64]);
+    // 9. SK t0
+    for (i = 0; i < T0_WORDS; i = i + 1)
+      push_input_word(sk[c][`SKPK_RHO_WIDTH + `SK_K_WIDTH + `SK_tr_WIDTH + SK_s1_BYTES_L*8 + SK_s2_BYTES_L*8 + i*64 +: 64]);
 
-    total_input_words = 4 + 1 + 8 + fmt_word_len + 4 + 4 + 80 + 96 + 312;
+    total_input_words = RHO_WORDS + 1 + TR_WORDS + fmt_word_len + K_WORDS + RND_WORDS + S1_WORDS + S2_WORDS + T0_WORDS;
     $display("  Pushed %0d input words total. Draining output...", total_input_words);
 
     // ---------- Drain DATA_OUT continuously ----------
-    // Output order: z(400 words) → h(8 words) → ctilde(6 words) = 414 total
-    total_output_words = 400 + 8 + 6;
+    // Output order: z(z_WORDS_OUT) → h(h_WORDS_OUT) → ctilde(CTILDE_WORDS_OUT)
+    // TUMCREATE: byte offsets within sig[] use level-specific CTILDE_WIDTH and z_WIDTH macros.
+    total_output_words = TOTAL_OUT_WORDS;
     recv_idx = 0;
     while (recv_idx < total_output_words) begin
       axi_read(64'h18, status_r);
       if (status_r[2] === 1'b0) begin  // !out_empty
         axi_read(64'h10, data_r);
         // Route based on word index
-        if (recv_idx < 400) begin
-          // z: words 0..399 → sig_out[CTILDE_WIDTH + recv_idx*64 +:]
-          sig_out[`CTILDE_WIDTH_3 + recv_idx*64 +: 64] = data_r;
-        end else if (recv_idx < 408) begin
-          // h: words 400..407 → sig_out[CTILDE_WIDTH + z_WIDTH + (recv_idx-400)*64 +:]
-          sig_out[`CTILDE_WIDTH_3 + `z_WIDTH_3 + (recv_idx-400)*64 +: 64] = data_r;
+        if (recv_idx < z_WORDS_OUT) begin
+          // z: words 0..z_WORDS_OUT-1 → sig_out[CTILDE_WIDTH_L + recv_idx*64 +:]
+          sig_out[((`SEC_LVL==2)?`CTILDE_WIDTH_2:(`SEC_LVL==3)?`CTILDE_WIDTH_3:`CTILDE_WIDTH_5) + recv_idx*64 +: 64] = data_r;
+        end else if (recv_idx < z_WORDS_OUT + h_WORDS_OUT) begin
+          // h → sig_out[CTILDE_WIDTH_L + z_WIDTH_L + (recv_idx-z_WORDS_OUT)*64 +:]
+          sig_out[((`SEC_LVL==2)?`CTILDE_WIDTH_2:(`SEC_LVL==3)?`CTILDE_WIDTH_3:`CTILDE_WIDTH_5)
+                   + ((`SEC_LVL==2)?`z_WIDTH_2:(`SEC_LVL==3)?`z_WIDTH_3:`z_WIDTH_5)
+                   + (recv_idx - z_WORDS_OUT)*64 +: 64] = data_r;
         end else begin
-          // ctilde: words 408..413 → sig_out[0 + (recv_idx-408)*64 +:]
-          sig_out[(recv_idx-408)*64 +: 64] = data_r;
+          // ctilde → sig_out[0 + (recv_idx - z_WORDS_OUT - h_WORDS_OUT)*64 +:]
+          sig_out[(recv_idx - z_WORDS_OUT - h_WORDS_OUT)*64 +: 64] = data_r;
         end
         recv_idx = recv_idx + 1;
       end else begin
@@ -338,47 +377,29 @@ module tb_sign_bridge;
     $display("  Drain complete: %0d words, cycles=%0d", recv_idx, total_cycles);
 
     // ---------- Compare SIG ----------
-    // Track first/last wrong byte and per-region counts for diagnostics.
     first_wrong = -1; last_wrong = -1;
     wrong_ctilde = 0; wrong_z = 0; wrong_h = 0;
-    for (i = 0; i < `SIG_BYTES_3; i = i + 1) begin
-      if (sig_out[i*8 +: 8] !== sig_3[c][i*8 +: 8]) begin
+    for (i = 0; i < SIG_BYTES_L; i = i + 1) begin
+      if (sig_out[i*8 +: 8] !== sig[c][i*8 +: 8]) begin
         wrong_sig_bytes = wrong_sig_bytes + 1;
         if (first_wrong < 0) first_wrong = i;
         last_wrong = i;
-        if      (i < 48)              wrong_ctilde = wrong_ctilde + 1;
-        else if (i < 48 + 3200)       wrong_z      = wrong_z + 1;
-        else                          wrong_h      = wrong_h + 1;
+        if      (i < CTILDE_BYTES_L)               wrong_ctilde = wrong_ctilde + 1;
+        else if (i < CTILDE_BYTES_L + z_BYTES_L)   wrong_z      = wrong_z + 1;
+        else                                        wrong_h      = wrong_h + 1;
         if (wrong_sig_bytes <= 10) begin
           $display("[Bridge Sign KAT#%0d, byte sig{%0d}] WRONG: Expected %h, received %h",
-                   c, i+1, sig_3[c][i*8 +: 8], sig_out[i*8 +: 8]);
+                   c, i+1, sig[c][i*8 +: 8], sig_out[i*8 +: 8]);
         end
       end
     end
     $display("  WRONG byte range: [%0d .. %0d] (count=%0d)", first_wrong, last_wrong, wrong_sig_bytes);
-    $display("  Per-region: ctilde=%0d/48  z=%0d/3200  h=%0d/61",
-             wrong_ctilde, wrong_z, wrong_h);
-    // Dump expected AND received words 168..260 (z) and 400..413 (h + ctilde) for byte-level comparison
-    $display("  --- Expected (from KAT sig_3) ---");
-    for (i = 168; i <= 260; i = i + 1) begin
-      $display("  EXP word[%0d] = %h", i, sig_3[c][`CTILDE_WIDTH_3 + i*64 +: 64]);
-    end
-    $display("  --- Received (from bridge) ---");
-    for (i = 168; i <= 260; i = i + 1) begin
-      $display("  RECV word[%0d] = %h", i, sig_out[`CTILDE_WIDTH_3 + i*64 +: 64]);
-    end
-    $display("  --- Expected h+ctilde words 400..413 ---");
-    for (i = 400; i <= 413; i = i + 1) begin
-      $display("  EXP word[%0d] = %h", i, sig_3[c][`CTILDE_WIDTH_3 + i*64 +: 64]);
-    end
-    $display("  --- Received h+ctilde words 400..413 ---");
-    for (i = 400; i <= 413; i = i + 1) begin
-      $display("  RECV word[%0d] = %h", i, sig_out[`CTILDE_WIDTH_3 + i*64 +: 64]);
-    end
+    $display("  Per-region: ctilde=%0d/%0d  z=%0d/%0d  h=%0d/%0d",
+             wrong_ctilde, CTILDE_BYTES_L, wrong_z, z_BYTES_L, wrong_h, h_BYTES_L);
 
     $display("");
     $display("=== [Bridge Sign] RESULT: SIG wrong=%0d / %0d, cycles=%0d ===",
-             wrong_sig_bytes, `SIG_BYTES_3, total_cycles);
+             wrong_sig_bytes, SIG_BYTES_L, total_cycles);
 
     if (wrong_sig_bytes == 0) begin
       $display("testbench done - PASS");
@@ -388,9 +409,6 @@ module tb_sign_bridge;
 
     $finish;
   end
-
-  // fix: PROBE debug removed after T0 stall fix verified.
-  // Watchdog retained to catch any future regressions.
 
   // ----------------------------- Watchdog -----------------------------
   initial begin
